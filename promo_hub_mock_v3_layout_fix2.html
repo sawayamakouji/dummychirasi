@@ -1,0 +1,2271 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>チラシ/クーポン 施策一元管理モック v3（レイアウト編集 修正版 / ローカル動作）</title>
+  <style>
+    :root{
+      --bg:#f6f7fb; --panel:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb;
+      --shadow: 0 10px 30px rgba(0,0,0,.08);
+      --primary:#2563eb; --primary-weak:#dbeafe;
+      --danger:#ef4444; --danger-weak:#fee2e2;
+      --ok:#10b981; --ok-weak:#d1fae5;
+      --warn:#f59e0b; --warn-weak:#ffedd5;
+      --chip:#f3f4f6; --chip-text:#374151;
+      --r:16px; --rs:12px;
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    .dark{
+      --bg:#0b1220; --panel:#0f172a; --text:#e5e7eb; --muted:#9ca3af; --border:#1f2937;
+      --shadow: 0 12px 40px rgba(0,0,0,.45);
+      --chip:#111827; --chip-text:#d1d5db;
+      --primary-weak: rgba(37,99,235,.18);
+      --danger-weak: rgba(239,68,68,.18);
+      --ok-weak: rgba(16,185,129,.18);
+      --warn-weak: rgba(245,158,11,.18);
+    }
+    *{box-sizing:border-box}
+    body{margin:0; background:var(--bg); color:var(--text); font-family:var(--font); line-height:1.4}
+    button,input,select,textarea{font-family:var(--font); color:var(--text)}
+    .app{height:100vh; display:grid; grid-template-columns:270px 1fr 450px; gap:14px; padding:14px}
+    @media (max-width:1180px){.app{grid-template-columns:270px 1fr}.detail{display:none}}
+    .card{background:var(--panel); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden}
+    /* sidebar */
+    .sidebar{display:flex; flex-direction:column}
+    .sidebarHeader{padding:14px 14px 10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px}
+    .brand .title{font-weight:900}
+    .brand .subtitle{font-size:12px; color:var(--muted)}
+    .sidebarBody{padding:10px; display:flex; flex-direction:column; gap:10px}
+    .navItem{padding:10px; border-radius:12px; border:1px solid transparent; display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none}
+    .navItem:hover{background:rgba(0,0,0,.03)}
+    .dark .navItem:hover{background:rgba(255,255,255,.05)}
+    .navItem.active{background:var(--primary-weak); border-color:rgba(37,99,235,.25)}
+    .navItem .name{display:flex; align-items:center; gap:10px; font-weight:900}
+    .pill{font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted)}
+    .sidebarFooter{margin-top:auto; padding:10px; border-top:1px solid var(--border); display:flex; gap:8px; flex-wrap:wrap}
+    .sidebarFooter .inputTiny{flex:1 1 220px}
+    /* btn / inputs */
+    .btn{border:1px solid var(--border); background:var(--panel); padding:9px 12px; border-radius:12px; cursor:pointer; font-weight:900; font-size:13px; display:inline-flex; gap:8px; align-items:center}
+    .btn:hover{transform:translateY(-1px)}
+    .btnPrimary{background:var(--primary); color:#fff; border-color:transparent}
+    .btnDanger{background:var(--danger); color:#fff; border-color:transparent}
+    .btnGhost{background:transparent}
+    .btnSmall{padding:7px 10px; border-radius:10px; font-size:12px}
+    .search{display:flex; align-items:center; gap:8px; padding:9px 10px; border:1px solid var(--border); border-radius:999px; background:rgba(0,0,0,.02); min-width:260px}
+    .dark .search{background:rgba(255,255,255,.04)}
+    .search input{border:none; outline:none; background:transparent; width:100%; font-size:13px}
+    .select,.input,.textarea{border:1px solid var(--border); border-radius:12px; padding:10px; background:rgba(0,0,0,.02); outline:none; font-size:13px; font-weight:800}
+    .dark .select,.dark .input,.dark .textarea{background:rgba(255,255,255,.04)}
+    .textarea{min-height:90px; resize:vertical; font-weight:700}
+    .hint{color:var(--muted); font-size:12px}
+    /* main */
+    .main{display:flex; flex-direction:column}
+    .topbar{padding:12px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+    .topbarLeft{display:flex; flex-direction:column; gap:2px; min-width:280px}
+    .topbarLeft .h{font-size:16px; font-weight:950}
+    .topbarLeft .d{font-size:12px; color:var(--muted)}
+    .topbarRight{display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end}
+    .toolbar{padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+    .filters{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .tableWrap{padding:10px 14px 14px; overflow:auto; height:100%}
+    table{width:100%; border-collapse:separate; border-spacing:0; min-width:980px}
+    thead th{position:sticky; top:0; background:var(--panel); z-index:1; text-align:left; font-size:12px; color:var(--muted); padding:10px; border-bottom:1px solid var(--border); white-space:nowrap}
+    tbody td{padding:10px; border-bottom:1px solid var(--border); font-size:13px; vertical-align:top}
+    tbody tr{cursor:pointer}
+    tbody tr:hover{background:rgba(0,0,0,.02)}
+    .dark tbody tr:hover{background:rgba(255,255,255,.04)}
+    tbody tr.selected{background:var(--primary-weak)}
+    .mono{font-family:var(--mono); font-size:12px; color:var(--muted)}
+    .nowrap{white-space:nowrap}
+    /* chips/badges/progress */
+    .chip{background:var(--chip); color:var(--chip-text); border:1px solid var(--border); border-radius:999px; padding:3px 8px; font-size:12px; font-weight:900}
+    .badge{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid var(--border); font-weight:950; font-size:12px}
+    .badge.ok{background:var(--ok-weak); border-color:rgba(16,185,129,.25)}
+    .badge.warn{background:var(--warn-weak); border-color:rgba(245,158,11,.25)}
+    .badge.danger{background:var(--danger-weak); border-color:rgba(239,68,68,.25)}
+    .progress{width:180px; height:10px; border-radius:999px; border:1px solid var(--border); background:rgba(0,0,0,.03); overflow:hidden}
+    .dark .progress{background:rgba(255,255,255,.05)}
+    .progress>div{height:100%; background:var(--primary); width:0%}
+    .progressRow{display:flex; align-items:center; gap:10px}
+    .kpiGrid{display:grid; grid-template-columns:repeat(3,1fr); gap:10px}
+    .kpi{border:1px solid var(--border); border-radius:var(--rs); padding:10px; background:rgba(0,0,0,.02)}
+    .dark .kpi{background:rgba(255,255,255,.04)}
+    .kpi .k{font-size:12px; color:var(--muted); font-weight:950}
+    .kpi .v{font-size:18px; font-weight:950; margin-top:4px}
+    /* detail */
+    .detail{display:flex; flex-direction:column}
+    .detailHeader{padding:12px 14px; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
+    .detailTitle{display:flex; flex-direction:column; gap:4px; min-width:0}
+    .detailTitle .h{font-weight:950; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .detailTitle .d{font-size:12px; color:var(--muted)}
+    .detailBody{padding:12px 14px 14px; overflow:auto; height:100%; display:flex; flex-direction:column; gap:12px}
+    .field{display:flex; flex-direction:column; gap:6px}
+    .label{font-size:12px; color:var(--muted); font-weight:950}
+    .detailActions{display:flex; gap:10px; padding:12px 14px; border-top:1px solid var(--border); flex-wrap:wrap}
+    /* modal */
+    .modalBack{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:16px; z-index:1000}
+    .modalBack.show{display:flex}
+    .modal{width:min(980px,96vw); max-height:90vh; overflow:auto; background:var(--panel); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow)}
+    .modalHead{padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:10px}
+    .modalHead .h{font-weight:950}
+    .modalBody{padding:12px 14px 14px; display:flex; flex-direction:column; gap:12px}
+    .modalBody textarea{width:100%; min-height:240px; font-family:var(--mono); font-size:12px; line-height:1.5; padding:12px; border-radius:12px; border:1px solid var(--border); background:rgba(0,0,0,.02); outline:none; color:var(--text)}
+    .dark .modalBody textarea{background:rgba(255,255,255,.04)}
+    .miniHelp{border:1px solid var(--border); border-radius:var(--rs); padding:10px; background:rgba(0,0,0,.02); font-size:12px; color:var(--muted)}
+    .dark .miniHelp{background:rgba(255,255,255,.04)}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+    @media (max-width:920px){.grid2{grid-template-columns:1fr}}
+    .callout{border:1px solid rgba(245,158,11,.35); background:var(--warn-weak); border-radius:14px; padding:10px}
+
+    /* layout editor */
+    .layoutTopRow{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .layoutViewport{border:1px solid var(--border); border-radius:16px; overflow:auto; background:rgba(0,0,0,.02)}
+    .dark .layoutViewport{background:rgba(255,255,255,.04)}
+    .layoutStage{position:relative; width:980px; max-width:100%; margin:12px; transform-origin:0 0; touch-action:none}
+    .layoutStage.gridOn{
+      background-image:
+        linear-gradient(to right, rgba(0,0,0,.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0,0,0,.08) 1px, transparent 1px);
+      background-size:40px 40px;
+      background-position:0 0;
+    }
+    .dark .layoutStage.gridOn{
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,.14) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,.14) 1px, transparent 1px);
+    }
+    .layoutBg{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none; opacity:.98}
+    .slotLayer{position:absolute; inset:0}
+    .slot{position:absolute; border:2px solid rgba(59,130,246,.9); border-radius:10px; background:rgba(59,130,246,.08); cursor:move; user-select:none; touch-action:none}
+    .dark .slot{background:rgba(59,130,246,.14)}
+    .slot.filled{border-color:rgba(16,185,129,.9); background:rgba(16,185,129,.10)}
+    .dark .slot.filled{background:rgba(16,185,129,.16)}
+    .slot.locked{opacity:.55; cursor:not-allowed}
+    .slot.selected{box-shadow:0 0 0 3px rgba(59,130,246,.25)}
+    .slotLabel{position:absolute; left:8px; top:6px; font-size:12px; font-weight:900; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,.9); border:1px solid rgba(0,0,0,.08)}
+    .dark .slotLabel{background:rgba(0,0,0,.55); border-color:rgba(255,255,255,.12)}
+    .slotMeta{position:absolute; right:8px; bottom:6px; font-size:11px; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,.9); border:1px solid rgba(0,0,0,.08)}
+    .dark .slotMeta{background:rgba(0,0,0,.55); border-color:rgba(255,255,255,.12)}
+    .handle{position:absolute; width:10px; height:10px; border-radius:4px; background:rgba(255,255,255,.95); border:1px solid rgba(0,0,0,.25)}
+    .dark .handle{background:rgba(0,0,0,.75); border-color:rgba(255,255,255,.25)}
+    .handle.nw{left:-6px; top:-6px; cursor:nwse-resize}
+    .handle.ne{right:-6px; top:-6px; cursor:nesw-resize}
+    .handle.sw{left:-6px; bottom:-6px; cursor:nesw-resize}
+    .handle.se{right:-6px; bottom:-6px; cursor:nwse-resize}
+    .layoutHint{font-size:12px; color:var(--muted); line-height:1.6}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:11px; padding:1px 6px; border:1px solid var(--border); border-radius:8px; background:rgba(0,0,0,.02)}
+    .dark .kbd{background:rgba(255,255,255,.04)}
+
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="card sidebar">
+      <div class="sidebarHeader">
+        <div class="brand">
+          <div class="title">Promotion Hub Mock v2</div>
+          <div class="subtitle">一括アップロード＋変更履歴（ローカル）</div>
+        </div>
+        <button class="btn btnGhost" id="toggleTheme" title="ダーク/ライト切替">🌗</button>
+      </div>
+      <div class="sidebarBody">
+        <div class="hint">ビュー</div>
+        <div id="nav"></div>
+        <div class="miniHelp">
+          <div style="font-weight:950; color:var(--text); margin-bottom:6px;">追加した重要機能</div>
+          <div>・BY向け：Excel/スプレッドシートから一括貼り付け→明細を一括登録/更新</div>
+          <div>・監査：作成/更新/削除/一括取込の <b>変更履歴ログ</b> を自動保存</div>
+          <div>・店向け：<b>公開後に商品が変わった</b> を検知（発注ミス防止の土台）</div>
+        </div>
+      </div>
+      <div class="sidebarFooter">
+        <input class="input inputTiny" id="userName" placeholder="あなた（例：BY_佐々木 / 営業企画A）" />
+        <button class="btn" id="exportBtn">⬇️ Export</button>
+        <button class="btn" id="importBtn">⬆️ Import</button>
+        <button class="btn btnDanger" id="resetBtn">🧨 初期化</button>
+      </div>
+    </aside>
+
+    <main class="card main">
+      <div class="topbar">
+        <div class="topbarLeft">
+          <div class="h" id="viewTitle">—</div>
+          <div class="d" id="viewDesc">—</div>
+        </div>
+        <div class="topbarRight">
+          <div class="search">
+            🔎 <input id="searchInput" placeholder="検索…（例：バレンタイン / 札幌桑園 / A版 / 2026-02-20 / 490...）" />
+          </div>
+          <button class="btn" id="bulkBtn" style="display:none;">🧺 一括アップロード</button>
+          <button class="btn btnPrimary" id="newBtn">＋ 新規</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="filters" id="filters"></div>
+        <div class="hint" id="resultHint">—</div>
+      </div>
+      <div class="tableWrap">
+        <div id="dashboard" style="display:none; padding:10px 14px 14px;"></div>
+        <div id="layoutEditor" style="display:none; padding:10px 14px 14px;"></div>
+        <table id="table" style="display:none;">
+          <thead><tr id="theadRow"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <section class="card detail">
+      <div class="detailHeader">
+        <div class="detailTitle">
+          <div class="h" id="detailHead">未選択</div>
+          <div class="d" id="detailMeta">左の一覧から選択</div>
+        </div>
+        <span class="pill" id="editState">VIEW</span>
+      </div>
+      <div class="detailBody" id="detailBody"></div>
+      <div class="detailActions">
+        <button class="btn" id="editBtn">✏️ 編集</button>
+        <button class="btn btnPrimary" id="saveBtn" disabled>💾 保存</button>
+        <button class="btn" id="cancelBtn" disabled>↩️ 取消</button>
+        <button class="btn" id="publishBtn" disabled title="確定版として店舗に公開（公開後の変更検知に使う）">📣 店舗へ公開</button>
+        <button class="btn btnDanger" id="deleteBtn" disabled>🗑️ 削除</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal -->
+  <div class="modalBack" id="modalBack">
+    <div class="modal">
+      <div class="modalHead">
+        <div class="h" id="modalTitle">—</div>
+        <button class="btn" id="modalClose">✖</button>
+      </div>
+      <div class="modalBody">
+        <div class="hint" id="modalHint">—</div>
+        <textarea id="modalTextarea" spellcheck="false"></textarea>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+          <button class="btn" id="modalSecondary">—</button>
+          <button class="btn btnPrimary" id="modalPrimary">—</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const STORAGE_KEY = "promo_hub_mock_v3";
+  const THEME_KEY = "promo_hub_theme";
+  const USER_KEY = "promo_hub_user";
+  const LOG_KEY = "promo_hub_audit_v3";
+
+  const VIEWS = {
+    plans:{icon:"🗓️",name:"施策計画（チラシ/クーポン）",desc:"営業企画：いつ/どの版/どの店/枠数/締切/確定。公開後の変更検知も。",columns:["promo_id","kind","campaign","edition","issue_date","store_set","slots","fill","deadline","risk","published","owner","status","updated_at"]},
+    items:{icon:"🧾",name:"商品明細（BY入力）",desc:"BY：JAN/商品名/売価/枠/提出状況。Excelから一括貼り付け対応。",columns:["promo_id","dept","buyer","jan","product","price","slot","item_status","updated_at"]},
+    layout:{icon:"🧩",name:"紙面レイアウト（枠編集）",desc:"チラシごとの枠（位置/サイズ）をオーバーレイ編集。枠IDを商品明細のslotと一致させると、埋まり/変更が見える。",columns:[]},
+    store:{icon:"🏬",name:"店舗ビュー",desc:"店：自店の「いつどのチラシに何が載るか」。公開後に変わったら検知。",columns:["issue_date","promo_id","campaign","edition","kind","status","fill","deadline","changed"]},
+    dash:{icon:"📊",name:"進捗ダッシュボード",desc:"埋まり率×締切リスクを俯瞰（今日時点）。",columns:[]},
+    history:{icon:"🕘",name:"変更履歴（監査ログ）",desc:"作成/更新/削除/一括取込のログ。発注ミス防止の必須部品。",columns:["ts","actor","entity","action","summary"]}
+  };
+
+  const MASTER = {
+    kinds:["チラシ","クーポン","アプリ施策"],
+    plan_status:["企画中","カンプ作成中","BY入力中","確定","入稿/印刷"],
+    item_status:["下書き","提出済","承認","差戻し"],
+    owners:["営業企画A","営業企画B","営業企画C"],
+    depts:["グロサリー","日配","畜産","水産","青果","惣菜","ベーカリー","非食品"],
+    buyers:["BY_佐々木","BY_成田","BY_久保田","BY_野々下","BY_山田","BY_鈴木"],
+    store_sets:["全店","道央A","道央B","道東A","都市型","郊外型","特定10店"],
+    stores:[
+      {store_id:"S001",name:"札幌桑園",set:"都市型"},
+      {store_id:"S002",name:"札幌西岡",set:"郊外型"},
+      {store_id:"S003",name:"滝川",set:"道央A"},
+      {store_id:"S004",name:"厚岸",set:"道東A"},
+      {store_id:"S005",name:"釧路昭和",set:"道東A"},
+      {store_id:"S006",name:"帯広",set:"道東A"},
+      {store_id:"S007",name:"北見",set:"道東A"},
+      {store_id:"S008",name:"室蘭",set:"道央B"},
+      {store_id:"S009",name:"旭川駅前",set:"道央A"},
+    ]
+  };
+
+  const $ = (sel)=>document.querySelector(sel);
+  const el = (tag, attrs={}, kids=[])=>{
+    const n = document.createElement(tag);
+    for (const [k,v] of Object.entries(attrs)){
+      if (k==="class") n.className=v;
+      else if (k==="text") n.textContent=v;
+      else if (k==="html") n.innerHTML=v;
+      else if (k.startsWith("on") && typeof v==="function") n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k,v);
+    }
+    for (const c of kids) n.appendChild(typeof c==="string"?document.createTextNode(c):c);
+    return n;
+  };
+  const deep = (x)=>JSON.parse(JSON.stringify(x));
+  const nowISO = ()=>new Date().toISOString();
+  const todayYMD = ()=>{
+    const d=new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  };
+  const shortDT = (iso)=>{
+    if(!iso) return "";
+    const d=new Date(iso); if(Number.isNaN(d.getTime())) return iso;
+    return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  };
+  const daysDiff = (ymd)=>{
+    if(!ymd) return null;
+    const [Y,M,D]=ymd.split("-").map(Number);
+    const t=new Date(Y,(M||1)-1,D||1);
+    const n=new Date();
+    const a=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+    const b=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+    return Math.round((b-a)/(1000*60*60*24));
+  };
+  const uid = ()=>"PR"+Math.random().toString(16).slice(2,8).toUpperCase();
+  const iid = ()=>"IT"+Math.random().toString(16).slice(2,10).toUpperCase();
+  const eid = ()=>"EV"+Math.random().toString(16).slice(2,10).toUpperCase();
+
+  const badge = (text, kind)=>el("span",{class:`badge ${kind||"warn"}`,text});
+  const progressBar = (rate)=>{
+    const outer=el("div",{class:"progress"},[el("div",{})]);
+    outer.firstChild.style.width = (Math.max(0,Math.min(1,rate||0))*100).toFixed(0)+"%";
+    return outer;
+  };
+
+  function getUser(){
+    return ($("#userName").value||localStorage.getItem(USER_KEY)||"local_user").trim() || "local_user";
+  }
+  function setUser(v){
+    localStorage.setItem(USER_KEY, v);
+  }
+
+  // ===== Audit Log =====
+  let audit = loadAudit();
+  function loadAudit(){
+    const raw=localStorage.getItem(LOG_KEY);
+    if(!raw) return [];
+    try{
+      const arr=JSON.parse(raw);
+      return Array.isArray(arr)?arr:[];
+    }catch(e){ return []; }
+  }
+  function saveAudit(){
+    localStorage.setItem(LOG_KEY, JSON.stringify(audit.slice(-1200)));
+  }
+  function summarizeDiff(before, after){
+    if(!before) return "create";
+    const keys = Object.keys(after||{});
+    const changed=[];
+    keys.forEach(k=>{
+      if(JSON.stringify(before[k])!==JSON.stringify(after[k])) changed.push(k);
+    });
+    if(!changed.length) return "no-change";
+    const core = changed.slice(0,8).join(", ");
+    return changed.length>8 ? `${core} …（計${changed.length}項目）` : core;
+  }
+  function logEvent({entity, entity_id, action, summary, meta, promo_id}){
+    const ev={
+      event_id:eid(),
+      ts:nowISO(),
+      actor:getUser(),
+      entity, entity_id, action,
+      promo_id: promo_id || null,
+      summary: summary || "",
+      meta: meta || null
+    };
+    audit.push(ev);
+    saveAudit();
+  }
+  function logsForPromo(promo_id){
+    return audit.filter(x=>x.promo_id===promo_id).slice().reverse();
+  }
+  function logsForEntity(entity, id){
+    return audit.filter(x=>x.entity===entity && x.entity_id===id).slice().reverse();
+  }
+
+  function joinStoresLabel(plan){
+    if(plan.store_set!=="特定10店") return plan.store_set||"—";
+    const names=(plan.store_ids||[]).map(id=>MASTER.stores.find(s=>s.store_id===id)?.name).filter(Boolean);
+    return names.length?`特定(${names.length})`:"特定(0)";
+  }
+
+  // ===== Data =====
+  let all = loadAll();
+  let currentViewKey="plans";
+  let selectedKey=null;
+  let editMode=false;
+  let draft=null;
+  // layout editor state
+  let layoutState={promo_id:null,page:1,zoom:1,showFill:true,grid:true};
+  let selectedSlotId=null;
+  let dragSession=null;
+
+  function seedDummy(){
+    const plans=[], items=[];
+    const base=[
+      {kind:"チラシ",campaign:"バレンタイン特集",edition:"A版",issue_date:"2026-02-14",store_set:"都市型",slots:40,owner:"営業企画A",status:"BY入力中",buyer_deadline:"2026-02-08"},
+      {kind:"チラシ",campaign:"週末お買い得",edition:"B版",issue_date:"2026-02-20",store_set:"全店",slots:60,owner:"営業企画B",status:"カンプ作成中",buyer_deadline:"2026-02-12"},
+      {kind:"チラシ",campaign:"春の新生活",edition:"A版",issue_date:"2026-03-01",store_set:"道央A",slots:50,owner:"営業企画A",status:"企画中",buyer_deadline:"2026-02-18"},
+      {kind:"クーポン",campaign:"アプリ限定クーポン(2月後半)",edition:"—",issue_date:"2026-02-16",store_set:"全店",slots:20,owner:"営業企画C",status:"BY入力中",buyer_deadline:"2026-02-10"},
+      {kind:"チラシ",campaign:"肉の日フェア",edition:"C版",issue_date:"2026-02-29",store_set:"特定10店",slots:30,owner:"営業企画B",status:"BY入力中",buyer_deadline:"2026-02-15",store_ids:["S001","S002","S003","S005","S006","S008","S009"]},
+      {kind:"アプリ施策",campaign:"ポイント10倍(週末)",edition:"—",issue_date:"2026-02-22",store_set:"道東A",slots:10,owner:"営業企画C",status:"確定",buyer_deadline:"2026-02-05", published_at: nowISO()},
+    ];
+    base.forEach((p,idx)=>{
+      const promo_id=uid();
+      plans.push({
+        promo_id,
+        kind:p.kind, campaign:p.campaign, edition:p.edition,
+        issue_date:p.issue_date, period_start:p.issue_date, period_end:p.issue_date,
+        store_set:p.store_set, store_ids:p.store_ids||[],
+        slots:p.slots, owner:p.owner, status:p.status, buyer_deadline:p.buyer_deadline,
+        published_at: p.published_at || null,
+        note:"（ダミー）備考：カンプ確定・例外店対応・差し替えなどを書く想定",
+        created_at:nowISO(), updated_at:nowISO()
+      });
+      const targetCount = p.status==="確定"?Math.floor(p.slots*0.95):
+        p.status==="BY入力中"?Math.floor(p.slots*0.55):
+        p.status==="カンプ作成中"?Math.floor(p.slots*0.15):Math.floor(p.slots*0.05);
+      for(let i=0;i<targetCount;i++){
+        const dept=MASTER.depts[(i+idx)%MASTER.depts.length];
+        const buyer=MASTER.buyers[(i+2*idx)%MASTER.buyers.length];
+        const st = (p.status==="確定")?"承認":(p.status==="BY入力中")?(i%5===0?"下書き":"提出済"):"下書き";
+        items.push({
+          item_id:iid(),
+          promo_id, dept, buyer,
+          jan:String(4900000000000+(idx*1000)+i).slice(0,13),
+          product:`（ダミー）商品${i+1} - ${dept}`,
+          price:98+(i%10)*20,
+          regular_price:128+(i%10)*20,
+          slot:`P${1+(i%8)}-${1+(i%6)}`,
+          item_status:st,
+          note:(i%9===0)?"例外店あり":"",
+          created_at:nowISO(), updated_at:nowISO()
+        });
+      }
+    });
+    // layouts: 1ページ分だけ簡易生成（枠IDは S01...）
+    const layouts=[];
+    if(plans.length){
+      const p0=plans[0].promo_id;
+      const slots=[];
+      const cols=2, rows=3;
+      let n=1;
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const x=0.06 + c*0.47;
+          const y=0.10 + r*0.28;
+          const w=0.42;
+          const h=0.22;
+          const id=("S"+String(n).padStart(2,"0"));
+          slots.push({slot_id:id,label:id,x,y,w,h,locked:false,flex:false,updated_at:nowISO(),updated_by:"seed"});
+          n++;
+        }
+      }
+      layouts.push({layout_id:"LAY-"+p0+"-p1", promo_id:p0, page:1, bg:null, bg_w:0, bg_h:0, slots, updated_at:nowISO(), updated_by:"seed"});
+    }
+    return {plans,items,layouts};
+  }
+
+  function loadAll(){
+    const raw=localStorage.getItem(STORAGE_KEY);
+    if(!raw){
+      const d=seedDummy();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+      return d;
+    }
+    try{
+      const obj=JSON.parse(raw);
+      if(!Array.isArray(obj.plans)) obj.plans=[];
+      if(!Array.isArray(obj.items)) obj.items=[];
+      if(!Array.isArray(obj.layouts)) obj.layouts=[];
+      return obj;
+    }catch(e){
+      const d=seedDummy();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+      return d;
+    }
+  }
+  function saveAll(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(all)); }
+
+  function calcFill(promo_id){
+    const plan=all.plans.find(p=>p.promo_id===promo_id);
+    const slots=Number(plan?.slots||0);
+    const its=all.items.filter(it=>it.promo_id===promo_id);
+    const count_all=its.length;
+    const count_submitted=its.filter(it=>it.item_status==="提出済"||it.item_status==="承認").length;
+    const count_approved=its.filter(it=>it.item_status==="承認").length;
+    return {
+      slots, count_all, count_submitted, count_approved,
+      rate_all: slots?count_all/slots:0,
+      rate_submitted: slots?count_submitted/slots:0,
+      rate_approved: slots?count_approved/slots:0,
+    };
+  }
+
+  function riskBadge(plan){
+    const d=daysDiff(plan.buyer_deadline);
+    const fill=calcFill(plan.promo_id).rate_submitted;
+    if(d!==null && d<0) return badge("締切超過","danger");
+    if(fill>=1) return badge("OK","ok");
+    if(d!==null && d<=2) return badge(`残${d}日`,"danger");
+    if(d!==null && d<=7) return badge(`残${d}日`,"warn");
+    return badge(d!==null?`残${d}日`:"—","warn");
+  }
+
+  function storeMatchesPlan(store, plan){
+    if(plan.store_set==="特定10店") return (plan.store_ids||[]).includes(store.store_id);
+    if(!plan.store_set) return false;
+    if(plan.store_set==="全店") return true;
+    return plan.store_set===store.set || plan.store_set==="都市型"&&store.set==="都市型" || plan.store_set==="郊外型"&&store.set==="郊外型";
+  }
+
+  function changedAfterPublish(plan){
+    if(!plan?.published_at) return false;
+    const pub=new Date(plan.published_at).getTime();
+    if(!Number.isFinite(pub)) return false;
+    const latest = all.items
+      .filter(it=>it.promo_id===plan.promo_id)
+      .reduce((mx,it)=>Math.max(mx, new Date(it.updated_at||0).getTime()), 0);
+    return latest > pub;
+  }
+
+  const DETAIL_FORMS = {
+    plans:[
+      {key:"promo_id",label:"施策ID",type:"readonly"},
+      {key:"kind",label:"種別",type:"select",options:MASTER.kinds,required:true},
+      {key:"campaign",label:"施策名",type:"text",required:true,placeholder:"例：週末お買い得"},
+      {key:"edition",label:"版（A/B/C…）",type:"text",required:true,placeholder:"例：A版"},
+      {key:"issue_date",label:"発行日（紙面日）",type:"date",required:true},
+      {key:"period_start",label:"期間開始",type:"date",required:true},
+      {key:"period_end",label:"期間終了",type:"date",required:true},
+      {key:"store_set",label:"対象店（セット）",type:"select",options:MASTER.store_sets,required:true},
+      {key:"store_ids",label:"特定店（store_set=特定10店時）",type:"storepicker"},
+      {key:"slots",label:"枠数（想定）",type:"number",required:true,placeholder:"例：60"},
+      {key:"buyer_deadline",label:"BY入力締切",type:"date",required:true},
+      {key:"owner",label:"営業企画担当",type:"select",options:MASTER.owners,required:true},
+      {key:"status",label:"施策ステータス",type:"select",options:MASTER.plan_status,required:true},
+      {key:"published_at",label:"店舗公開（確定版）",type:"published"},
+      {key:"note",label:"備考",type:"textarea",placeholder:"差し替え/例外店/供給懸念など"},
+    ],
+    items:[
+      {key:"item_id",label:"明細ID",type:"readonly"},
+      {key:"promo_id",label:"施策ID",type:"selectPromo",required:true},
+      {key:"dept",label:"部門",type:"select",options:MASTER.depts,required:true},
+      {key:"buyer",label:"BY",type:"select",options:MASTER.buyers,required:true},
+      {key:"jan",label:"JAN",type:"text",required:true,placeholder:"13桁"},
+      {key:"product",label:"商品名",type:"text",required:true},
+      {key:"price",label:"売価",type:"number",required:true},
+      {key:"regular_price",label:"通常売価",type:"number"},
+      {key:"slot",label:"紙面枠（例：P1-3）",type:"text"},
+      {key:"item_status",label:"提出状況",type:"select",options:MASTER.item_status,required:true},
+      {key:"note",label:"備考",type:"textarea",placeholder:"例外店/差戻し理由など"},
+    ],
+    store:[{key:"store_id",label:"店舗",type:"storeSelect",required:true}],
+    dash:[],
+    history:[]
+  };
+
+  function loadTheme(){
+    const t=localStorage.getItem(THEME_KEY)||"light";
+    document.body.classList.toggle("dark", t==="dark");
+  }
+  function toggleTheme(){
+    const isDark=document.body.classList.toggle("dark");
+    localStorage.setItem(THEME_KEY, isDark?"dark":"light");
+  }
+
+  function renderNav(){
+    const nav=$("#nav"); nav.innerHTML="";
+    for(const [k,v] of Object.entries(VIEWS)){
+      const count = (k==="plans")?all.plans.length:(k==="items")?all.items.length:(k==="history")?audit.length:"";
+      nav.appendChild(el("div",{class:`navItem ${k===currentViewKey?"active":""}`,onclick:()=>switchView(k)},[
+        el("div",{class:"name"},[el("span",{text:v.icon}), el("span",{text:v.name})]),
+        el("span",{class:"pill",text:count!==""?String(count):" "})
+      ]));
+    }
+  }
+  function renderHeader(){
+    $("#viewTitle").textContent=VIEWS[currentViewKey].name;
+    $("#viewDesc").textContent=VIEWS[currentViewKey].desc;
+  }
+
+  function renderFilters(){
+    const box=$("#filters"); box.innerHTML="";
+    const makeSelect=(id, opts, allLabel)=>{
+      const s=el("select",{class:"select",id});
+      s.appendChild(el("option",{value:"__all",text:allLabel}));
+      opts.forEach(o=>s.appendChild(el("option",{value:o,text:o})));
+      s.addEventListener("change",()=>renderMain());
+      return s;
+    };
+
+    if(currentViewKey==="plans"){
+      box.appendChild(makeSelect("f_kind",MASTER.kinds,"種別：すべて"));
+      box.appendChild(makeSelect("f_status",MASTER.plan_status,"状態：すべて"));
+      box.appendChild(makeSelect("f_owner",MASTER.owners,"営業企画：すべて"));
+      box.appendChild(makeSelect("f_store_set",MASTER.store_sets,"対象店：すべて"));
+      box.appendChild(makeSelect("f_sort",["更新日（新→旧）","更新日（旧→新）","発行日（近→遠）","発行日（遠→近）","埋まり率（高→低）","締切（近→遠）"],"ソート：更新日（新→旧）"));
+      $("#f_sort").value="更新日（新→旧）";
+    }
+    if(currentViewKey==="items"){
+      const promoSel=el("select",{class:"select",id:"f_promo"});
+      promoSel.appendChild(el("option",{value:"__all",text:"施策：すべて"}));
+      all.plans.forEach(p=>promoSel.appendChild(el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`})));
+      promoSel.addEventListener("change",()=>renderMain());
+      box.appendChild(promoSel);
+      box.appendChild(makeSelect("f_dept",MASTER.depts,"部門：すべて"));
+      box.appendChild(makeSelect("f_buyer",MASTER.buyers,"BY：すべて"));
+      box.appendChild(makeSelect("f_item_status",MASTER.item_status,"提出：すべて"));
+      box.appendChild(makeSelect("f_sort",["更新日（新→旧）","更新日（旧→新）","売価（高→低）","売価（低→高）"],"ソート：更新日（新→旧）"));
+      $("#f_sort").value="更新日（新→旧）";
+    }
+    if(currentViewKey==="store"){
+      const storeSel=el("select",{class:"select",id:"f_store"});
+      storeSel.appendChild(el("option",{value:"__all",text:"店舗：選択してください"}));
+      MASTER.stores.forEach(s=>storeSel.appendChild(el("option",{value:s.store_id,text:`${s.name}（${s.store_id}）`})));
+      storeSel.addEventListener("change",()=>{
+        selectedKey = storeSel.value==="__all"?null:storeSel.value;
+        editMode=false; draft=null;
+        renderMain(); renderDetail();
+      });
+      box.appendChild(storeSel);
+      box.appendChild(makeSelect("f_sort",["発行日（近→遠）","発行日（遠→近）","締切（近→遠）"],"ソート：発行日（近→遠）"));
+      $("#f_sort").value="発行日（近→遠）";
+    }
+    if(currentViewKey==="dash"){
+      box.appendChild(makeSelect("f_scope",["すべて","締切7日以内","締切超過","埋まり率80%未満"],"絞り込み：すべて"));
+      $("#f_scope").value="すべて";
+      box.appendChild(makeSelect("f_sort",["締切（近→遠）","埋まり率（低→高）","更新日（新→旧）"],"ソート：締切（近→遠）"));
+      $("#f_sort").value="締切（近→遠）";
+    }
+    if(currentViewKey==="layout"){
+      // promo selector
+      const promoSel=el("select",{class:"select",id:"f_layout_promo"});
+      promoSel.appendChild(el("option",{value:"__all",text:"施策：選択してください"}));
+      all.plans.forEach(p=>promoSel.appendChild(el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`})));
+      promoSel.value = selectedKey || "__all";
+      promoSel.addEventListener("change",()=>{
+        selectedKey = promoSel.value==="__all"?null:promoSel.value;
+        layoutState.promo_id = selectedKey;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      box.appendChild(promoSel);
+
+      // page selector
+      const pageSel=el("select",{class:"select",id:"f_layout_page"});
+      [1,2,3,4].forEach(n=>pageSel.appendChild(el("option",{value:String(n),text:`ページ ${n}`})));
+      pageSel.value=String(layoutState.page||1);
+      pageSel.addEventListener("change",()=>{
+        layoutState.page=parseInt(pageSel.value,10)||1;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      box.appendChild(pageSel);
+
+      // zoom
+      const zoomWrap=el("div",{style:"display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:12px;"});
+      zoomWrap.appendChild(el("span",{class:"hint",text:"ズーム"}));
+      const zoom=el("input",{type:"range",min:"60",max:"160",value:String(Math.round((layoutState.zoom||1)*100))});
+      zoom.style.width="140px";
+      const zlab=el("span",{class:"mono",text:`${Math.round((layoutState.zoom||1)*100)}%`});
+      zoom.addEventListener("input",()=>{
+        const v=parseInt(zoom.value,10)||100;
+        layoutState.zoom=v/100;
+        zlab.textContent=`${v}%`;
+        renderLayoutStageTransform();
+      });
+      zoomWrap.appendChild(zoom); zoomWrap.appendChild(zlab);
+      box.appendChild(zoomWrap);
+
+      const fillBtn=el("button",{class:"btn",text: layoutState.showFill?"✅ 埋まり表示":"☐ 埋まり表示", onclick:()=>{
+        layoutState.showFill=!layoutState.showFill;
+        renderMain();
+      }});
+      const gridBtn=el("button",{class:"btn",text: layoutState.grid?"✅ グリッド":"☐ グリッド", onclick:()=>{
+        layoutState.grid=!layoutState.grid;
+        renderLayoutStageTransform();
+      }});
+      const bgBtn=el("button",{class:"btn",text:"🖼️ 背景画像", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        $("#layoutBgInput").value="";
+        $("#layoutBgInput").click();
+      }});
+      const addBtn=el("button",{class:"btn btnPrimary",text:"＋ 枠", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        addSlot();
+      }});
+      const delBtn=el("button",{class:"btn btnDanger",text:"🗑️ 枠削除", onclick:()=>{
+        if(!selectedKey || !selectedSlotId){ alert("削除する枠を選択してください"); return; }
+        deleteSelectedSlot();
+      }});
+      box.appendChild(fillBtn);
+      box.appendChild(gridBtn);
+      box.appendChild(bgBtn);
+      box.appendChild(addBtn);
+      box.appendChild(delBtn);
+    }
+
+    if(currentViewKey==="history"){
+      box.appendChild(makeSelect("f_entity",["すべて","plan","item","bulk"],"対象：すべて"));
+      $("#f_entity").value="すべて";
+      box.appendChild(makeSelect("f_sort",["新しい順","古い順"],"ソート：新しい順"));
+      $("#f_sort").value="新しい順";
+    }
+  }
+
+  const qtext=()=>($("#searchInput").value||"").trim().toLowerCase();
+
+  function filterPlans(){
+    let rows=all.plans.slice();
+    const q=qtext();
+    const kind=$("#f_kind")?.value||"__all";
+    const status=$("#f_status")?.value||"__all";
+    const owner=$("#f_owner")?.value||"__all";
+    const set=$("#f_store_set")?.value||"__all";
+    const sort=$("#f_sort")?.value||"更新日（新→旧）";
+
+    rows=rows.filter(p=>{
+      if(kind!=="__all"&&p.kind!==kind) return false;
+      if(status!=="__all"&&p.status!==status) return false;
+      if(owner!=="__all"&&p.owner!==owner) return false;
+      if(set!=="__all"&&p.store_set!==set) return false;
+      if(!q) return true;
+      const hay=[p.promo_id,p.kind,p.campaign,p.edition,p.issue_date,p.store_set,p.owner,p.status,p.note].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+
+    rows.sort((a,b)=>{
+      const fillA=calcFill(a.promo_id).rate_submitted;
+      const fillB=calcFill(b.promo_id).rate_submitted;
+      const da=daysDiff(a.buyer_deadline);
+      const db=daysDiff(b.buyer_deadline);
+      const cmpDate=(x,y)=>(new Date(x||0)).getTime()-(new Date(y||0)).getTime();
+      switch(sort){
+        case "更新日（旧→新）": return cmpDate(a.updated_at,b.updated_at);
+        case "発行日（近→遠）": return cmpDate(a.issue_date,b.issue_date);
+        case "発行日（遠→近）": return cmpDate(b.issue_date,a.issue_date);
+        case "埋まり率（高→低）": return fillB-fillA;
+        case "締切（近→遠）": return (da??9999)-(db??9999);
+        default: return cmpDate(b.updated_at,a.updated_at);
+      }
+    });
+    return rows;
+  }
+
+  function filterItems(){
+    let rows=all.items.slice();
+    const q=qtext();
+    const promo=$("#f_promo")?.value||"__all";
+    const dept=$("#f_dept")?.value||"__all";
+    const buyer=$("#f_buyer")?.value||"__all";
+    const st=$("#f_item_status")?.value||"__all";
+    const sort=$("#f_sort")?.value||"更新日（新→旧）";
+
+    rows=rows.filter(it=>{
+      if(promo!=="__all"&&it.promo_id!==promo) return false;
+      if(dept!=="__all"&&it.dept!==dept) return false;
+      if(buyer!=="__all"&&it.buyer!==buyer) return false;
+      if(st!=="__all"&&it.item_status!==st) return false;
+      if(!q) return true;
+      const plan=all.plans.find(p=>p.promo_id===it.promo_id);
+      const hay=[it.item_id,it.promo_id,plan?.campaign,plan?.edition,plan?.kind,it.dept,it.buyer,it.jan,it.product,it.slot,it.item_status,it.note].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+
+    rows.sort((a,b)=>{
+      const cmpDate=(x,y)=>(new Date(x||0)).getTime()-(new Date(y||0)).getTime();
+      switch(sort){
+        case "更新日（旧→新）": return cmpDate(a.updated_at,b.updated_at);
+        case "売価（高→低）": return Number(b.price||0)-Number(a.price||0);
+        case "売価（低→高）": return Number(a.price||0)-Number(b.price||0);
+        default: return cmpDate(b.updated_at,a.updated_at);
+      }
+    });
+    return rows;
+  }
+
+  function filterStorePlans(store_id){
+    const store=MASTER.stores.find(s=>s.store_id===store_id);
+    if(!store) return [];
+    let rows=all.plans.filter(p=>storeMatchesPlan(store,p));
+    const q=qtext();
+    const sort=$("#f_sort")?.value||"発行日（近→遠）";
+    rows=rows.filter(p=>{
+      if(!q) return true;
+      const hay=[p.promo_id,p.kind,p.campaign,p.edition,p.issue_date,p.status,p.owner,p.store_set].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    rows.sort((a,b)=>{
+      const cmpDate=(x,y)=>(new Date(x||0)).getTime()-(new Date(y||0)).getTime();
+      const da=daysDiff(a.buyer_deadline), db=daysDiff(b.buyer_deadline);
+      switch(sort){
+        case "発行日（遠→近）": return cmpDate(b.issue_date,a.issue_date);
+        case "締切（近→遠）": return (da??9999)-(db??9999);
+        default: return cmpDate(a.issue_date,b.issue_date);
+      }
+    });
+    return rows;
+  }
+
+  function filterDash(){
+    let rows=all.plans.slice();
+    const q=qtext();
+    const scope=$("#f_scope")?.value||"すべて";
+    const sort=$("#f_sort")?.value||"締切（近→遠）";
+
+    rows=rows.filter(p=>{
+      if(!q) return true;
+      const hay=[p.promo_id,p.kind,p.campaign,p.edition,p.issue_date,p.status,p.owner,p.store_set].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+
+    rows=rows.filter(p=>{
+      const d=daysDiff(p.buyer_deadline);
+      const fill=calcFill(p.promo_id).rate_submitted;
+      if(scope==="締切7日以内") return d!==null && d>=0 && d<=7;
+      if(scope==="締切超過") return d!==null && d<0;
+      if(scope==="埋まり率80%未満") return fill<0.8;
+      return true;
+    });
+
+    rows.sort((a,b)=>{
+      const da=daysDiff(a.buyer_deadline), db=daysDiff(b.buyer_deadline);
+      const fa=calcFill(a.promo_id).rate_submitted, fb=calcFill(b.promo_id).rate_submitted;
+      const cmpDate=(x,y)=>(new Date(x||0)).getTime()-(new Date(y||0)).getTime();
+      switch(sort){
+        case "埋まり率（低→高）": return fa-fb;
+        case "更新日（新→旧）": return cmpDate(b.updated_at,a.updated_at);
+        default: return (da??9999)-(db??9999);
+      }
+    });
+    return rows;
+  }
+
+  function filterHistory(){
+    let rows=audit.slice();
+    const q=qtext();
+    const entity=$("#f_entity")?.value||"すべて";
+    const sort=$("#f_sort")?.value||"新しい順";
+    rows=rows.filter(e=>{
+      if(entity==="plan") return e.entity==="plan";
+      if(entity==="item") return e.entity==="item";
+      if(entity==="bulk") return e.entity==="bulk";
+      return true;
+    });
+    rows=rows.filter(e=>{
+      if(!q) return true;
+      const hay=[e.ts,e.actor,e.entity,e.action,e.summary,e.entity_id,e.promo_id].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    rows.sort((a,b)=>{
+      const ta=new Date(a.ts||0).getTime();
+      const tb=new Date(b.ts||0).getTime();
+      return sort==="古い順" ? (ta-tb) : (tb-ta);
+    });
+    return rows;
+  }
+
+  function renderTable(){
+    $("#dashboard").style.display="none";
+    $("#layoutEditor").style.display="none";
+    $("#table").style.display="";
+    const thead=$("#theadRow"), tbody=$("#tbody");
+    thead.innerHTML=""; tbody.innerHTML="";
+
+    const cols=VIEWS[currentViewKey].columns;
+    const label={
+      promo_id:"施策ID",kind:"種別",campaign:"施策名",edition:"版",issue_date:"発行日",
+      store_set:"対象店",slots:"枠数",fill:"埋まり",deadline:"締切",risk:"リスク",
+      owner:"営業企画",status:"状態",updated_at:"更新", published:"公開", changed:"変更",
+      dept:"部門",buyer:"BY",jan:"JAN",product:"商品名",price:"売価",slot:"枠",item_status:"提出",
+      ts:"日時", actor:"操作者", entity:"対象", action:"操作", summary:"内容"
+    };
+    cols.forEach(c=>thead.appendChild(el("th",{text:label[c]||c})));
+
+    let rows=[];
+    if(currentViewKey==="plans") rows=filterPlans();
+    if(currentViewKey==="items") rows=filterItems();
+    if(currentViewKey==="store"){
+      const sid=$("#f_store")?.value;
+      rows = (sid && sid!=="__all") ? filterStorePlans(sid) : [];
+    }
+    if(currentViewKey==="history") rows=filterHistory();
+
+    $("#resultHint").textContent = `${rows.length} 件`;
+
+    rows.forEach(r=>{
+      const isSel = (currentViewKey==="items") ? (r.item_id===selectedKey) :
+                    (currentViewKey==="history") ? (r.event_id===selectedKey) :
+                    (currentViewKey==="store") ? (r.promo_id===selectedKey) :
+                    (r.promo_id===selectedKey);
+      const tr=el("tr",{class:isSel?"selected":"",onclick:()=>selectRow(r)});
+      cols.forEach(c=>{
+        let td;
+
+        if(currentViewKey==="layout"){
+      // promo selector
+      const promoSel=el("select",{class:"select",id:"f_layout_promo"});
+      promoSel.appendChild(el("option",{value:"__all",text:"施策：選択してください"}));
+      all.plans.forEach(p=>promoSel.appendChild(el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`})));
+      promoSel.value = selectedKey || "__all";
+      promoSel.addEventListener("change",()=>{
+        selectedKey = promoSel.value==="__all"?null:promoSel.value;
+        layoutState.promo_id = selectedKey;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      box.appendChild(promoSel);
+
+      // page selector
+      const pageSel=el("select",{class:"select",id:"f_layout_page"});
+      [1,2,3,4].forEach(n=>pageSel.appendChild(el("option",{value:String(n),text:`ページ ${n}`})));
+      pageSel.value=String(layoutState.page||1);
+      pageSel.addEventListener("change",()=>{
+        layoutState.page=parseInt(pageSel.value,10)||1;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      box.appendChild(pageSel);
+
+      // zoom
+      const zoomWrap=el("div",{style:"display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:12px;"});
+      zoomWrap.appendChild(el("span",{class:"hint",text:"ズーム"}));
+      const zoom=el("input",{type:"range",min:"60",max:"160",value:String(Math.round((layoutState.zoom||1)*100))});
+      zoom.style.width="140px";
+      const zlab=el("span",{class:"mono",text:`${Math.round((layoutState.zoom||1)*100)}%`});
+      zoom.addEventListener("input",()=>{
+        const v=parseInt(zoom.value,10)||100;
+        layoutState.zoom=v/100;
+        zlab.textContent=`${v}%`;
+        renderLayoutStageTransform();
+      });
+      zoomWrap.appendChild(zoom); zoomWrap.appendChild(zlab);
+      box.appendChild(zoomWrap);
+
+      const fillBtn=el("button",{class:"btn",text: layoutState.showFill?"✅ 埋まり表示":"☐ 埋まり表示", onclick:()=>{
+        layoutState.showFill=!layoutState.showFill;
+        renderMain();
+      }});
+      const gridBtn=el("button",{class:"btn",text: layoutState.grid?"✅ グリッド":"☐ グリッド", onclick:()=>{
+        layoutState.grid=!layoutState.grid;
+        renderLayoutStageTransform();
+      }});
+      const bgBtn=el("button",{class:"btn",text:"🖼️ 背景画像", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        $("#layoutBgInput").value="";
+        $("#layoutBgInput").click();
+      }});
+      const addBtn=el("button",{class:"btn btnPrimary",text:"＋ 枠", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        addSlot();
+      }});
+      const delBtn=el("button",{class:"btn btnDanger",text:"🗑️ 枠削除", onclick:()=>{
+        if(!selectedKey || !selectedSlotId){ alert("削除する枠を選択してください"); return; }
+        deleteSelectedSlot();
+      }});
+      box.appendChild(fillBtn);
+      box.appendChild(gridBtn);
+      box.appendChild(bgBtn);
+      box.appendChild(addBtn);
+      box.appendChild(delBtn);
+    }
+
+    if(currentViewKey==="history"){
+          if(c==="ts") td=el("td",{class:"nowrap",text:shortDT(r.ts)});
+          else if(c==="actor") td=el("td",{},[el("span",{class:"chip",text:r.actor||"—"})]);
+          else if(c==="entity"){
+            const txt = r.entity==="plan" ? `施策` : r.entity==="item" ? `明細` : r.entity==="bulk" ? "一括" : r.entity;
+            td=el("td",{},[el("span",{class:"chip",text:txt})]);
+          } else if(c==="action"){
+            const k = (r.action==="delete")?"danger":(r.action==="update")?"warn":"ok";
+            td=el("td",{},[badge(r.action,k)]);
+          } else if(c==="summary"){
+            const prefix = r.promo_id ? `${r.promo_id} ` : "";
+            td=el("td",{},[el("div",{style:"font-weight:900;"}, prefix + (r.summary||"")), el("div",{class:"mono",text:r.entity_id||""})]);
+          } else td=el("td",{text:(r[c]??"")});
+          tr.appendChild(td);
+          return;
+        }
+    if(currentViewKey==="layout"){
+      setDetailButtons(false);
+      const promo_id = selectedKey;
+      const page = layoutState.page||1;
+      $("#detailHead").textContent = "枠の詳細（slot）";
+      $("#editState").textContent = "VIEW";
+      if(!promo_id){
+        $("#detailMeta").textContent = "施策を選択してください";
+        body.appendChild(el("div",{class:"empty",text:"左のフィルタで施策を選択すると、紙面枠の編集ができます。"}));
+        return;
+      }
+      const plan = all.plans.find(p=>p.promo_id===promo_id);
+      $("#detailMeta").textContent = `施策 ${promo_id} / ページ ${page} / ${plan? (plan.campaign+" "+plan.edition):""}`;
+
+      const lay = ensureLayout(promo_id,page);
+
+      body.appendChild(el("div",{class:"layoutHint",text:"枠一覧：クリックで選択。枠IDは商品明細のslotと一致させる想定。"}));
+      const list=el("div",{style:"display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;"});
+      lay.slots.forEach(s=>{
+        const c=countItemsForSlot(promo_id,s.slot_id);
+        const b=el("button",{class:`btn ${s.slot_id===selectedSlotId?"btnPrimary":""}`,text:`${s.slot_id}${c?` (${c})`:""}`,onclick:()=>selectSlot(s.slot_id)});
+        list.appendChild(b);
+      });
+      body.appendChild(list);
+
+      if(!selectedSlotId){
+        body.appendChild(el("div",{class:"empty",text:"枠を選択してください（右上：＋枠 で追加）"}));
+        return;
+      }
+      const slot = lay.slots.find(s=>s.slot_id===selectedSlotId);
+      if(!slot){
+        body.appendChild(el("div",{class:"empty",text:"選択枠が見つかりません。"}));
+        return;
+      }
+
+      const form=el("div",{class:"form"});
+      const mkRow=(label, node)=>{
+        const row=el("div",{class:"row"});
+        row.appendChild(el("div",{class:"lbl",text:label}));
+        row.appendChild(node);
+        return row;
+      };
+      const inp=(v)=>{ const i=el("input",{class:"input",value:String(v)}); return i; };
+      const num=(v,min,max,step)=>{
+        const i=el("input",{class:"input",type:"number",value:String(v),min:String(min),max:String(max),step:String(step)});
+        return i;
+      };
+
+      const idBox=inp(slot.slot_id); idBox.disabled=true;
+      form.appendChild(mkRow("枠ID(slot)", idBox));
+
+      const labelBox=inp(slot.label||slot.slot_id);
+      labelBox.addEventListener("change",()=>{
+        slot.label=labelBox.value.trim()||slot.slot_id;
+        slot.updated_at=nowISO(); slot.updated_by=getUser();
+        lay.updated_at=nowISO(); lay.updated_by=getUser();
+        saveAll();
+        logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot label ${slot.slot_id}`});
+        renderMain();
+      });
+      form.appendChild(mkRow("表示名", labelBox));
+
+      const lockBox=el("input",{type:"checkbox"});
+      lockBox.checked=!!slot.locked;
+      lockBox.addEventListener("change",()=>{
+        slot.locked=lockBox.checked;
+        slot.updated_at=nowISO(); slot.updated_by=getUser();
+        lay.updated_at=nowISO(); lay.updated_by=getUser();
+        saveAll();
+        logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot lock ${slot.slot_id}=${slot.locked}`});
+        renderMain();
+      });
+      form.appendChild(mkRow("ロック", lockBox));
+
+      const x=num(Math.round(slot.x*1000)/10,0,100,0.1);
+      const y=num(Math.round(slot.y*1000)/10,0,100,0.1);
+      const w=num(Math.round(slot.w*1000)/10,0,100,0.1);
+      const h=num(Math.round(slot.h*1000)/10,0,100,0.1);
+      const applyPos=()=>{
+        slot.x=clamp01((parseFloat(x.value)||0)/100);
+        slot.y=clamp01((parseFloat(y.value)||0)/100);
+        slot.w=clamp01((parseFloat(w.value)||0)/100);
+        slot.h=clamp01((parseFloat(h.value)||0)/100);
+        slot.x=Math.min(slot.x,1-slot.w);
+        slot.y=Math.min(slot.y,1-slot.h);
+        slot.updated_at=nowISO(); slot.updated_by=getUser();
+        lay.updated_at=nowISO(); lay.updated_by=getUser();
+        saveAll();
+        logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot pos ${slot.slot_id}`});
+        renderMain();
+      };
+      [x,y,w,h].forEach(i=>i.addEventListener("change",applyPos));
+      form.appendChild(mkRow("X(%)", x));
+      form.appendChild(mkRow("Y(%)", y));
+      form.appendChild(mkRow("W(%)", w));
+      form.appendChild(mkRow("H(%)", h));
+
+      body.appendChild(form);
+
+      body.appendChild(el("div",{class:"layoutHint",style:"margin-top:10px;"},[
+        el("div",{text:"注意：背景画像は localStorage に保存されます。巨大画像は保存に失敗する場合があるため、縮小JPEGに変換して保存します。"})
+      ]));
+      return;
+    }
+
+        if(c==="promo_id") td=el("td",{},[el("span",{class:"mono",text:r.promo_id})]);
+        else if(c==="store_set") td=el("td",{},[el("span",{class:"chip",text:joinStoresLabel(r)})]);
+        else if(c==="slots") td=el("td",{class:"nowrap",text:String(r.slots??"")});
+        else if(c==="fill"){
+          const f=calcFill(r.promo_id);
+          td=el("td",{},[
+            el("div",{class:"progressRow"},[
+              progressBar(f.rate_submitted),
+              el("span",{class:"mono",text:`${Math.min(f.count_submitted,f.slots)}/${f.slots}（${Math.round(f.rate_submitted*100)}%）`})
+            ])
+          ]);
+        } else if(c==="deadline"){
+          const d=daysDiff(r.buyer_deadline);
+          td=el("td",{class:"nowrap"},[
+            el("div",{text:r.buyer_deadline||"—",style:"font-weight:950;"}),
+            el("div",{class:"hint",text:d===null?"":(d<0?`（-${Math.abs(d)}日）`:`（残${d}日）`)})
+          ]);
+        } else if(c==="risk") td=el("td",{},[riskBadge(r)]);
+        else if(c==="updated_at") td=el("td",{class:"nowrap",text:shortDT(r.updated_at)});
+        else if(c==="price") td=el("td",{class:"nowrap",text:r.price!=null?`¥${Number(r.price).toLocaleString()}`:""});
+        else if(c==="jan") td=el("td",{class:"mono",text:r.jan||""});
+        else if(c==="item_status"){
+          const k=(r.item_status==="承認")?"ok":(r.item_status==="差戻し")?"danger":(r.item_status==="提出済")?"warn":"warn";
+          td=el("td",{},[badge(r.item_status,k)]);
+        } else if(c==="status"){
+          const k=(r.status==="確定"||r.status==="入稿/印刷")?"ok":"warn";
+          td=el("td",{},[badge(r.status,k)]);
+        } else if(c==="published"){
+          const pub=r.published_at;
+          if(!pub) td=el("td",{},[badge("未公開","warn")]);
+          else{
+            const changed=changedAfterPublish(r);
+            td=el("td",{},[badge(changed?"公開後に変更あり":"公開済","ok")]);
+          }
+        } else if(c==="changed"){
+          const p=all.plans.find(x=>x.promo_id===r.promo_id);
+          if(p && p.published_at && changedAfterPublish(p)) td=el("td",{},[badge("変更あり","danger")]);
+          else td=el("td",{},[badge("—","warn")]);
+        } else td=el("td",{text:(r[c]??"")});
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderDashboard(){
+    $("#layoutEditor").style.display="none";
+    $("#table").style.display="none";
+    $("#dashboard").style.display="";
+    const dash=$("#dashboard"); dash.innerHTML="";
+    const rows=filterDash();
+    $("#resultHint").textContent = `${rows.length} 件（今日：${todayYMD()}）`;
+
+    const total=all.plans.length;
+    const overdue=all.plans.filter(p=>(daysDiff(p.buyer_deadline)??9999)<0).length;
+    const near7=all.plans.filter(p=>{const d=daysDiff(p.buyer_deadline); return d!==null && d>=0 && d<=7;}).length;
+
+    dash.appendChild(el("div",{class:"kpiGrid"},[
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"施策数"}), el("div",{class:"v",text:String(total)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"締切超過"}), el("div",{class:"v",text:String(overdue)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"締切7日以内"}), el("div",{class:"v",text:String(near7)})]),
+    ]));
+    dash.appendChild(el("div",{style:"height:10px"}));
+
+    rows.forEach(p=>{
+      const f=calcFill(p.promo_id);
+      const d=daysDiff(p.buyer_deadline);
+      const dText=(d===null)?"—":(d<0?`締切超過（-${Math.abs(d)}日）`:`残${d}日`);
+      dash.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px; margin-bottom:10px;"},[
+        el("div",{style:"padding:12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;"},[
+          el("div",{},[
+            el("div",{style:"font-weight:950;"},[el("span",{class:"mono",text:p.promo_id})," ",el("span",{text:`${p.campaign} ${p.edition}`})]),
+            el("div",{class:"hint",text:`${p.kind} / 発行 ${p.issue_date} / 対象 ${joinStoresLabel(p)} / 営業企画 ${p.owner}`})
+          ]),
+          el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;"},[
+            badge(p.status,(p.status==="確定"||p.status==="入稿/印刷")?"ok":"warn"),
+            riskBadge(p),
+            p.published_at ? badge(changedAfterPublish(p)?"公開後に変更あり":"公開済","ok") : badge("未公開","warn")
+          ])
+        ]),
+        el("div",{style:"padding:12px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;"},[
+          el("div",{style:"display:flex; align-items:center; gap:10px; flex-wrap:wrap;"},[
+            progressBar(f.rate_submitted),
+            el("div",{class:"mono",text:`提出済以上 ${f.count_submitted}/${f.slots}（${Math.round(f.rate_submitted*100)}%） / 承認 ${f.count_approved}/${f.slots}`})
+          ]),
+          el("div",{class:"mono",text:`BY締切 ${p.buyer_deadline} / ${dText}`})
+        ])
+      ]));
+    });
+  }
+
+  function setDetailButtons(enabled){
+    $("#editBtn").disabled = !enabled || currentViewKey==="dash" || currentViewKey==="history";
+    $("#deleteBtn").disabled = !enabled || editMode || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history";
+    $("#saveBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history";
+    $("#cancelBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history";
+    $("#publishBtn").disabled = !(enabled && currentViewKey==="plans" && !editMode);
+  }
+
+    // ===== Layout Editor =====
+  function layoutId(promo_id, page){ return `LAY-${promo_id}-p${page}`; }
+
+  function ensureLayout(promo_id, page){
+    if(!promo_id) return null;
+    const pageNo = page||1;
+    let lay = all.layouts.find(x=>x.promo_id===promo_id && Number(x.page)===Number(pageNo));
+    if(!lay){
+      lay = {layout_id:layoutId(promo_id,pageNo), promo_id, page:pageNo, bg:null, bg_w:0, bg_h:0, slots:[], updated_at:nowISO(), updated_by:getUser()};
+      all.layouts.push(lay);
+      saveAll();
+      logEvent({entity:"layout", entity_id:lay.layout_id, action:"create", promo_id, summary:`layout create (page ${pageNo})`});
+    }
+    if(!Array.isArray(lay.slots)) lay.slots=[];
+    return lay;
+  }
+
+  function nextSlotId(promo_id){
+    const used = new Set();
+    all.layouts.filter(l=>l.promo_id===promo_id).forEach(l=>{
+      (l.slots||[]).forEach(s=>used.add(s.slot_id));
+    });
+    for(let i=1;i<=99;i++){
+      const id = "S"+String(i).padStart(2,"0");
+      if(!used.has(id)) return id;
+    }
+    return "S99";
+  }
+
+  function countItemsForSlot(promo_id, slot_id){
+    return all.items.filter(i=>i.promo_id===promo_id && String(i.slot||"").trim()===String(slot_id)).length;
+  }
+
+  function renderLayout(){
+    $("#dashboard").style.display="none";
+    $("#table").style.display="none";
+    const box=$("#layoutEditor");
+    box.style.display="";
+    box.innerHTML="";
+    $("#resultHint").textContent = `レイアウト編集：${selectedKey?selectedKey:"—"} / ページ ${layoutState.page||1}`;
+
+    // default selection: first plan
+    if(!selectedKey){
+      const p0=all.plans[0];
+      if(p0){
+        selectedKey=p0.promo_id;
+        layoutState.promo_id=selectedKey;
+      }
+    } else {
+      layoutState.promo_id=selectedKey;
+    }
+    const promo_id = selectedKey;
+    const page = layoutState.page||1;
+    const lay = ensureLayout(promo_id,page);
+
+    const plan = all.plans.find(p=>p.promo_id===promo_id) || null;
+
+    box.appendChild(el("div",{class:"layoutHint"},[
+      el("div",{},[
+        el("span",{style:"font-weight:950; color:var(--text);",text:"編集のコツ："}),
+        el("span",{text:"枠ID（S01…）を 商品明細のslot と一致させると、埋まり率と差し替え影響が見える。 "}),
+        el("span",{class:"kbd",text:"ドラッグ"}),
+        el("span",{text:"で移動 / 角の"}),
+        el("span",{class:"kbd",text:"□"}),
+        el("span",{text:"でリサイズ。"}),
+      ]),
+      el("div",{style:"margin-top:4px;"}, plan ? `施策：${plan.campaign} ${plan.edition} / 発行日 ${plan.issue_date}` : "施策：未選択")
+    ]));
+
+    const viewport = el("div",{class:"layoutViewport"});
+    const stage = el("div",{class:"layoutStage",id:"layoutStage",style:"aspect-ratio: 3 / 4; height:auto;"});
+    const bg = el("img",{class:"layoutBg",id:"layoutBg",alt:"bg"});
+    const layer = el("div",{class:"slotLayer",id:"slotLayer"});
+    stage.appendChild(bg);
+    stage.appendChild(layer);
+    viewport.appendChild(stage);
+    box.appendChild(viewport);
+
+    if(lay && lay.bg){
+      bg.src = lay.bg;
+      if(lay.bg_w && lay.bg_h){
+        stage.style.aspectRatio = `${lay.bg_w} / ${lay.bg_h}`;
+      }
+      bg.style.display="";
+    } else {
+      bg.removeAttribute("src");
+      bg.style.display="none";
+      stage.style.aspectRatio = "3 / 4";
+    }
+
+    stage.classList.toggle("gridOn", !!layoutState.grid);
+
+    layer.innerHTML="";
+    if(lay){
+      lay.slots.forEach(s=>{
+        const count = layoutState.showFill ? countItemsForSlot(promo_id, s.slot_id) : null;
+        const filled = layoutState.showFill && (count>0);
+        const slot = el("div",{id:`slot_${s.slot_id}`, class:`slot ${filled?"filled":""} ${s.locked?"locked":""} ${s.slot_id===selectedSlotId?"selected":""}`, "data-slot":s.slot_id});
+        slot.style.left = (s.x*100).toFixed(3)+"%";
+        slot.style.top  = (s.y*100).toFixed(3)+"%";
+        slot.style.width=(s.w*100).toFixed(3)+"%";
+        slot.style.height=(s.h*100).toFixed(3)+"%";
+        slot.appendChild(el("div",{class:"slotLabel",text:s.label||s.slot_id}));
+        slot.appendChild(el("div",{class:"slotMeta",text: layoutState.showFill ? (count?`${count}点`:"空") : " "}));
+        ["nw","ne","sw","se"].forEach(h=>{
+          const handle=el("div",{class:`handle ${h}`,"data-handle":h});
+          slot.appendChild(handle);
+        });
+        slot.addEventListener("pointerdown",(ev)=>onSlotPointerDown(ev, s.slot_id));
+        slot.addEventListener("click",(ev)=>{ ev.stopPropagation(); selectSlot(s.slot_id); });
+        layer.appendChild(slot);
+      });
+    }
+
+    stage.addEventListener("click",()=>{ if(layoutState._justDragged && (Date.now()-layoutState._justDragged)<250) return; selectedSlotId=null; renderMain(); renderDetail(); });
+
+    renderLayoutStageTransform();
+  }
+
+  function renderLayoutStageTransform(){
+    const stage=$("#layoutStage");
+    if(!stage) return;
+    stage.style.transform = `scale(${layoutState.zoom||1})`;
+    stage.classList.toggle("gridOn", !!layoutState.grid);
+  }
+
+  function selectSlot(slot_id){
+    selectedSlotId=slot_id;
+    renderMain(); renderDetail();
+  }
+
+  function addSlot(){
+    const promo_id = selectedKey;
+    const page = layoutState.page||1;
+    const lay = ensureLayout(promo_id,page);
+    const id = nextSlotId(promo_id);
+    const s={slot_id:id,label:id,x:0.08,y:0.08,w:0.30,h:0.18,locked:false,flex:false,updated_at:nowISO(),updated_by:getUser()};
+    lay.slots.push(s);
+    lay.updated_at=nowISO(); lay.updated_by=getUser();
+    saveAll();
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot add ${id}`});
+    selectedSlotId=id;
+    renderMain(); renderDetail();
+  }
+
+  function deleteSelectedSlot(){
+    const promo_id=selectedKey;
+    const page=layoutState.page||1;
+    const lay=ensureLayout(promo_id,page);
+    const idx=lay.slots.findIndex(s=>s.slot_id===selectedSlotId);
+    if(idx<0) return;
+    const id=lay.slots[idx].slot_id;
+    if(!confirm(`枠 ${id} を削除します。よろしいですか？`)) return;
+    lay.slots.splice(idx,1);
+    lay.updated_at=nowISO(); lay.updated_by=getUser();
+    saveAll();
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot delete ${id}`});
+    selectedSlotId=null;
+    renderMain(); renderDetail();
+  }
+
+  function getRelPos(ev){
+    const stage=$("#layoutStage");
+    const r=stage.getBoundingClientRect();
+    const x=(ev.clientX - r.left)/r.width;
+    const y=(ev.clientY - r.top)/r.height;
+    return {x,y};
+  }
+
+  function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+function applySlotEl(el, s){
+    if(!el || !el.isConnected || !s) return;
+    el.style.left = (s.x*100).toFixed(3)+"%";
+    el.style.top  = (s.y*100).toFixed(3)+"%";
+    el.style.width=(s.w*100).toFixed(3)+"%";
+    el.style.height=(s.h*100).toFixed(3)+"%";
+  }
+
+  function markSelectedSlotEl(currentEl){
+    document.querySelectorAll(".slot.selected").forEach(e=>e.classList.remove("selected"));
+    if(currentEl) currentEl.classList.add("selected");
+  }
+
+  function onSlotPointerDown(ev, slot_id){
+    const promo_id=selectedKey;
+    const page=layoutState.page||1;
+    const lay=ensureLayout(promo_id,page);
+    const s=lay?.slots?.find(x=>x.slot_id===slot_id);
+    if(!s) return;
+
+    // detect resize handle (if any)
+    const handleEl = (ev.target && ev.target.closest) ? ev.target.closest(".handle") : null;
+    const handle = handleEl ? handleEl.getAttribute("data-handle") : null;
+
+    if(s.locked){
+      ev.preventDefault();
+      selectedSlotId = slot_id;
+      markSelectedSlotEl(ev.currentTarget);
+      renderDetail();
+      return;
+    }
+
+    selectedSlotId = slot_id;
+    markSelectedSlotEl(ev.currentTarget);
+    renderDetail();
+
+    ev.preventDefault();
+    ev.stopPropagation();
+
+    const start = getRelPos(ev);
+    const el = ev.currentTarget;
+    try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+
+    dragSession = {
+      promo_id, page, layout_id: lay.layout_id,
+      slot_id,
+      mode: handle ? "resize" : "move",
+      handle: handle || null,
+      start,
+      orig: {...s},
+      el,
+      pointerId: ev.pointerId,
+      moved:false
+    };
+    window.addEventListener("pointermove", onSlotPointerMove);
+    window.addEventListener("pointerup", onSlotPointerUp, {once:true});
+    window.addEventListener("pointercancel", onSlotPointerUp, {once:true});
+  }
+
+  function onSlotPointerMove(ev){
+    if(!dragSession) return;
+    const {promo_id,page,slot_id,mode,handle,start,orig}=dragSession;
+    const lay=ensureLayout(promo_id,page);
+    const s=lay.slots.find(x=>x.slot_id===slot_id);
+    if(!s) return;
+
+    const cur=getRelPos(ev);
+    const dx=cur.x-start.x;
+    const dy=cur.y-start.y;
+
+    if(mode==="move"){
+      s.x = clamp01(orig.x + dx);
+      s.y = clamp01(orig.y + dy);
+      s.x = Math.min(s.x, 1 - s.w);
+      s.y = Math.min(s.y, 1 - s.h);
+    } else {
+      let x=orig.x, y=orig.y, w=orig.w, h=orig.h;
+      const min=0.02;
+      if(handle==="se"){
+        w = Math.max(min, orig.w + dx);
+        h = Math.max(min, orig.h + dy);
+      } else if(handle==="sw"){
+        w = Math.max(min, orig.w - dx);
+        h = Math.max(min, orig.h + dy);
+        x = orig.x + dx;
+      } else if(handle==="ne"){
+        w = Math.max(min, orig.w + dx);
+        h = Math.max(min, orig.h - dy);
+        y = orig.y + dy;
+      } else if(handle==="nw"){
+        w = Math.max(min, orig.w - dx);
+        h = Math.max(min, orig.h - dy);
+        x = orig.x + dx;
+        y = orig.y + dy;
+      }
+      x = clamp01(x); y = clamp01(y);
+      w = Math.min(w, 1 - x);
+      h = Math.min(h, 1 - y);
+      s.x=x; s.y=y; s.w=w; s.h=h;
+    }
+    s.updated_at=nowISO(); s.updated_by=getUser();
+    lay.updated_at=nowISO(); lay.updated_by=getUser();
+
+    // update DOM only (fast); full rerender on pointerup
+    if(Math.abs(dx) + Math.abs(dy) > 0.002) dragSession.moved = true;
+    applySlotEl(dragSession.el, s);
+  }
+
+  function onSlotPointerUp(ev){
+    window.removeEventListener("pointermove", onSlotPointerMove);
+    if(!dragSession) return;
+
+    const session = dragSession;
+    dragSession = null;
+
+    const {promo_id,page,slot_id,mode,orig,layout_id,el,pointerId,moved} = session;
+    try{ el && el.releasePointerCapture && el.releasePointerCapture(pointerId); }catch(e){}
+
+    const lay = ensureLayout(promo_id,page);
+    const s = lay?.slots?.find(x=>x.slot_id===slot_id);
+    if(!s){ renderMain(); renderDetail(); return; }
+
+    saveAll();
+    const summary = mode==="move" ? `slot move ${slot_id}` : `slot resize ${slot_id}`;
+    logEvent({entity:"layout", entity_id:layout_id, action:"update", promo_id, summary, meta:{slot_id, before:orig, after:s}});
+    if(moved) layoutState._justDragged = Date.now();
+
+    // refresh once (counts/selection/inputs)
+    renderMain(); renderDetail();
+  }
+
+  async function setLayoutBackgroundFromFile(file){
+    if(!file) return;
+    const dataUrl = await new Promise((resolve,reject)=>{
+      const fr=new FileReader();
+      fr.onload=()=>resolve(fr.result);
+      fr.onerror=reject;
+      fr.readAsDataURL(file);
+    });
+
+    const img = new Image();
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve; img.onerror=reject; img.src=dataUrl;
+    });
+
+    const maxSide=1600;
+    let w=img.naturalWidth, h=img.naturalHeight;
+    let scale=Math.min(1, maxSide/Math.max(w,h));
+    const cw=Math.round(w*scale), ch=Math.round(h*scale);
+    const canvas=document.createElement("canvas");
+    canvas.width=cw; canvas.height=ch;
+    const ctx=canvas.getContext("2d");
+    ctx.drawImage(img,0,0,cw,ch);
+    const jpeg = canvas.toDataURL("image/jpeg", 0.82);
+
+    const promo_id=selectedKey;
+    const page=layoutState.page||1;
+    const lay=ensureLayout(promo_id,page);
+    lay.bg=jpeg; lay.bg_w=cw; lay.bg_h=ch;
+    lay.updated_at=nowISO(); lay.updated_by=getUser();
+    saveAll();
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:"background set"});
+    renderMain(); renderDetail();
+  }
+
+function renderDetail(){
+    const body=$("#detailBody"); body.innerHTML="";
+    if(currentViewKey==="dash"){
+      $("#detailHead").textContent="ダッシュボード";
+      $("#detailMeta").textContent="右ペイン編集なし";
+      $("#editState").textContent="VIEW";
+      setDetailButtons(false);
+      return;
+    }
+    if(currentViewKey==="layout"){
+      // promo selector
+      const promoSel=el("select",{class:"select",id:"f_layout_promo"});
+      promoSel.appendChild(el("option",{value:"__all",text:"施策：選択してください"}));
+      all.plans.forEach(p=>promoSel.appendChild(el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`})));
+      promoSel.value = selectedKey || "__all";
+      promoSel.addEventListener("change",()=>{
+        selectedKey = promoSel.value==="__all"?null:promoSel.value;
+        layoutState.promo_id = selectedKey;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      body.appendChild(promoSel);
+
+      // page selector
+      const pageSel=el("select",{class:"select",id:"f_layout_page"});
+      [1,2,3,4].forEach(n=>pageSel.appendChild(el("option",{value:String(n),text:`ページ ${n}`})));
+      pageSel.value=String(layoutState.page||1);
+      pageSel.addEventListener("change",()=>{
+        layoutState.page=parseInt(pageSel.value,10)||1;
+        selectedSlotId=null;
+        renderMain(); renderDetail();
+      });
+      body.appendChild(pageSel);
+
+      // zoom
+      const zoomWrap=el("div",{style:"display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:12px;"});
+      zoomWrap.appendChild(el("span",{class:"hint",text:"ズーム"}));
+      const zoom=el("input",{type:"range",min:"60",max:"160",value:String(Math.round((layoutState.zoom||1)*100))});
+      zoom.style.width="140px";
+      const zlab=el("span",{class:"mono",text:`${Math.round((layoutState.zoom||1)*100)}%`});
+      zoom.addEventListener("input",()=>{
+        const v=parseInt(zoom.value,10)||100;
+        layoutState.zoom=v/100;
+        zlab.textContent=`${v}%`;
+        renderLayoutStageTransform();
+      });
+      zoomWrap.appendChild(zoom); zoomWrap.appendChild(zlab);
+      body.appendChild(zoomWrap);
+
+      const fillBtn=el("button",{class:"btn",text: layoutState.showFill?"✅ 埋まり表示":"☐ 埋まり表示", onclick:()=>{
+        layoutState.showFill=!layoutState.showFill;
+        renderMain();
+      }});
+      const gridBtn=el("button",{class:"btn",text: layoutState.grid?"✅ グリッド":"☐ グリッド", onclick:()=>{
+        layoutState.grid=!layoutState.grid;
+        renderLayoutStageTransform();
+      }});
+      const bgBtn=el("button",{class:"btn",text:"🖼️ 背景画像", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        $("#layoutBgInput").value="";
+        $("#layoutBgInput").click();
+      }});
+      const addBtn=el("button",{class:"btn btnPrimary",text:"＋ 枠", onclick:()=>{
+        if(!selectedKey){ alert("先に施策を選択してください"); return; }
+        addSlot();
+      }});
+      const delBtn=el("button",{class:"btn btnDanger",text:"🗑️ 枠削除", onclick:()=>{
+        if(!selectedKey || !selectedSlotId){ alert("削除する枠を選択してください"); return; }
+        deleteSelectedSlot();
+      }});
+      body.appendChild(fillBtn);
+      body.appendChild(gridBtn);
+      body.appendChild(bgBtn);
+      body.appendChild(addBtn);
+      body.appendChild(delBtn);
+    }
+
+    if(currentViewKey==="history"){
+      $("#detailHead").textContent="変更履歴";
+      $("#detailMeta").textContent="左のログを選択すると詳細を表示";
+      $("#editState").textContent="VIEW";
+      setDetailButtons(true);
+      if(!selectedKey){ setDetailButtons(false); return; }
+      const ev = audit.find(x=>x.event_id===selectedKey);
+      if(!ev){ setDetailButtons(false); return; }
+      body.appendChild(el("div",{class:"callout"},[
+        el("div",{style:"font-weight:950; margin-bottom:6px;"}, "監査ログ（モック）"),
+        el("div",{class:"mono",text:`${ev.ts} / ${ev.actor} / ${ev.entity} / ${ev.action}`}),
+        el("div",{style:"margin-top:6px; font-weight:900;"}, ev.summary || "—"),
+        el("div",{class:"mono",style:"margin-top:6px;",text:`entity_id=${ev.entity_id} / promo_id=${ev.promo_id||"-"}`}),
+      ]));
+      if(ev.meta){
+        body.appendChild(el("div",{class:"field"},[
+          el("div",{class:"label",text:"meta(JSON)"}),
+          el("pre",{class:"mono",style:"white-space:pre-wrap; border:1px solid var(--border); border-radius:12px; padding:10px; background:rgba(0,0,0,.02); margin:0;"}, JSON.stringify(ev.meta,null,2))
+        ]));
+      }
+      return;
+    }
+
+    if(!selectedKey){
+      $("#detailHead").textContent="未選択";
+      $("#detailMeta").textContent="左の一覧から選択";
+      $("#editState").textContent="VIEW";
+      setDetailButtons(false);
+      return;
+    }
+
+    let selected=null;
+    if(currentViewKey==="plans") selected=all.plans.find(p=>p.promo_id===selectedKey);
+    if(currentViewKey==="items") selected=all.items.find(it=>it.item_id===selectedKey);
+    if(currentViewKey==="store") selected={store_id:selectedKey};
+    if(!selected){ setDetailButtons(false); return; }
+
+    const viewObj = editMode ? draft : selected;
+
+    if(currentViewKey==="plans"){
+      $("#detailHead").textContent = `${viewObj.campaign||"(無題)"} ${viewObj.edition||""}`;
+      const f=calcFill(viewObj.promo_id);
+      const pub = viewObj.published_at ? ` / 公開 ${shortDT(viewObj.published_at)}` : "";
+      const ch = viewObj.published_at && changedAfterPublish(viewObj) ? " / 公開後に変更あり" : "";
+      $("#detailMeta").textContent = `ID ${viewObj.promo_id} / 提出済 ${Math.round(f.rate_submitted*100)}% / 更新 ${shortDT(viewObj.updated_at)}${pub}${ch}`;
+    } else if(currentViewKey==="items"){
+      const plan=all.plans.find(p=>p.promo_id===viewObj.promo_id);
+      $("#detailHead").textContent = `${viewObj.product||"(無題)"}（${viewObj.dept||""}）`;
+      $("#detailMeta").textContent = `施策 ${plan?(plan.campaign+" "+plan.edition):viewObj.promo_id} / 更新 ${shortDT(viewObj.updated_at)}`;
+    } else if(currentViewKey==="store"){
+      const st=MASTER.stores.find(s=>s.store_id===viewObj.store_id);
+      $("#detailHead").textContent = st ? `店舗：${st.name}` : "店舗";
+      $("#detailMeta").textContent = "店舗別ビュー（店舗選択を編集扱い）";
+    }
+
+    $("#editState").textContent = editMode ? "EDIT" : "VIEW";
+    setDetailButtons(true);
+
+    if(currentViewKey==="plans"){
+      const f=calcFill(viewObj.promo_id);
+      const d=daysDiff(viewObj.buyer_deadline);
+      body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
+        el("div",{style:"padding:10px; border-bottom:1px solid var(--border); font-weight:950; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;"},[
+          el("span",{text:"進捗サマリ"}),
+          viewObj.published_at ? badge(changedAfterPublish(viewObj)?"公開後に変更あり":"公開済","ok") : badge("未公開","warn")
+        ]),
+        el("div",{style:"padding:10px; display:flex; flex-direction:column; gap:8px;"},[
+          el("div",{style:"display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;"},[
+            el("div",{},[el("div",{class:"hint",text:"提出済以上"}), el("div",{style:"font-weight:950;"},`${f.count_submitted}/${f.slots}（${Math.round(f.rate_submitted*100)}%）`)]),
+            el("div",{},[el("div",{class:"hint",text:"承認"}), el("div",{style:"font-weight:950;"},`${f.count_approved}/${f.slots}（${Math.round(f.rate_approved*100)}%）`)]),
+            el("div",{},[el("div",{class:"hint",text:"締切"}), el("div",{style:"font-weight:950;"},`${viewObj.buyer_deadline} ${d===null?"":(d<0?`（超過-${Math.abs(d)}日）`:`（残${d}日）`)}`)]),
+          ]),
+          el("div",{style:"display:flex; gap:10px; align-items:center; flex-wrap:wrap;"},[
+            progressBar(f.rate_submitted),
+            el("span",{class:"mono",text:"埋まり率＝（提出済/承認）÷枠数（モック定義）"})
+          ])
+        ])
+      ]));
+      // latest logs for this promo
+      const logs=logsForPromo(viewObj.promo_id).slice(0,8);
+      body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
+        el("div",{style:"padding:10px; border-bottom:1px solid var(--border); font-weight:950;"},["最近の変更（この施策）"]),
+        el("div",{style:"padding:10px; display:flex; flex-direction:column; gap:8px;"}, logs.length?logs.map(l=>{
+          const label = l.entity==="plan"?"施策":"明細";
+          const act = l.action;
+          const k = act==="delete"?"danger":act==="update"?"warn":"ok";
+          return el("div",{style:"display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; border:1px solid var(--border); border-radius:12px; padding:10px;"},[
+            el("div",{},[
+              el("div",{style:"font-weight:950;"},`${shortDT(l.ts)} / ${l.actor}`),
+              el("div",{class:"hint",text:`${label} / ${l.summary || ""}`})
+            ]),
+            badge(act,k)
+          ]);
+        }):[el("div",{class:"hint",text:"ログがありません（モックでは更新すると溜まります）"})])
+      ]));
+    }
+
+    (DETAIL_FORMS[currentViewKey]||[]).forEach(f=>{
+      const wrap=el("div",{class:"field"},[el("div",{class:"label",text:f.label})]);
+      wrap.appendChild(editMode?renderFieldEdit(f,viewObj):renderFieldView(f,viewObj));
+      body.appendChild(wrap);
+    });
+
+    if(currentViewKey==="items"){
+      const logs=logsForEntity("item", viewObj.item_id).slice(0,6);
+      body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
+        el("div",{style:"padding:10px; border-bottom:1px solid var(--border); font-weight:950;"},["変更履歴（この明細）"]),
+        el("div",{style:"padding:10px; display:flex; flex-direction:column; gap:8px;"}, logs.length?logs.map(l=>{
+          const k = l.action==="delete"?"danger":l.action==="update"?"warn":"ok";
+          return el("div",{style:"display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; border:1px solid var(--border); border-radius:12px; padding:10px;"},[
+            el("div",{},[
+              el("div",{style:"font-weight:950;"},`${shortDT(l.ts)} / ${l.actor}`),
+              el("div",{class:"hint",text:l.summary||""})
+            ]),
+            badge(l.action,k)
+          ]);
+        }):[el("div",{class:"hint",text:"この明細のログがありません"})])
+      ]));
+    }
+
+    if(currentViewKey==="store"){
+      const store=MASTER.stores.find(s=>s.store_id===selectedKey);
+      if(store){
+        const plans=filterStorePlans(store.store_id).slice(0,10);
+        body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
+          el("div",{style:"padding:10px; border-bottom:1px solid var(--border); font-weight:950;"},["直近の施策（この店）"]),
+          el("div",{style:"padding:10px; display:flex; flex-direction:column; gap:8px;"}, plans.length?plans.map(p=>{
+            const f=calcFill(p.promo_id);
+            const changed = p.published_at && changedAfterPublish(p);
+            return el("div",{style:"border:1px solid var(--border); border-radius:12px; padding:10px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;"},[
+              el("div",{},[
+                el("div",{style:"font-weight:950;"},`${p.issue_date} / ${p.campaign} ${p.edition}`),
+                el("div",{class:"hint",text:`${p.kind} / 状態 ${p.status} / 提出 ${Math.round(f.rate_submitted*100)}% / 公開 ${p.published_at?shortDT(p.published_at):"未"}${changed?" / ★公開後に変更あり":""}`})
+              ]),
+              el("div",{style:"display:flex; gap:8px; flex-wrap:wrap;"},[
+                el("button",{class:"btn btnSmall",onclick:()=>showItemsModalForPromo(p.promo_id)},["商品を見る"]),
+                changed?el("button",{class:"btn btnSmall",onclick:()=>showPromoChanges(p.promo_id)},["変更を見る"]):el("span",{})
+              ])
+            ]);
+          }):[el("div",{class:"hint",text:"対象施策がありません"})])
+        ]));
+      }
+    }
+  }
+
+  function renderFieldView(f,obj){
+    const v=obj[f.key];
+    if(f.type==="readonly") return el("div",{class:"mono",text:String(v??"—")});
+    if(f.type==="published"){
+      if(!obj.published_at) return el("div",{class:"hint",text:"未公開（右下の「店舗へ公開」を押すと公開時刻が記録され、以後の変更検知ができます）"});
+      const changed = changedAfterPublish(obj);
+      return el("div",{},[
+        el("div",{style:"font-weight:900;"}, `公開：${shortDT(obj.published_at)}${changed?"（★公開後に商品変更あり）":""}`),
+        el("div",{class:"hint",text:"※実運用では“公開後の変更”を店・発注へ必ず通知する仕組みにする"})
+      ]);
+    }
+    if(f.type==="storeSelect"){
+      const st=MASTER.stores.find(s=>s.store_id===v);
+      return el("div",{style:"font-weight:900;"}, st?`${st.name}（${st.store_id} / ${st.set}）`:"—");
+    }
+    if(f.type==="storepicker"){
+      if(obj.store_set!=="特定10店") return el("div",{class:"hint",text:"—（対象店セットが「特定10店」の時のみ）"});
+      const names=(obj.store_ids||[]).map(id=>MASTER.stores.find(s=>s.store_id===id)?.name).filter(Boolean);
+      const box=el("div",{});
+      if(!names.length) return el("div",{class:"hint",text:"—"});
+      names.forEach(n=>box.appendChild(el("span",{class:"chip",text:n,style:"margin-right:6px; margin-bottom:6px; display:inline-block;"})));
+      return box;
+    }
+    if(f.type==="selectPromo"){
+      const p=all.plans.find(x=>x.promo_id===v);
+      return el("div",{style:"font-weight:900;"},p?`${p.promo_id}｜${p.campaign} ${p.edition}`:(v||"—"));
+    }
+    if(f.type==="textarea") return el("div",{style:"white-space:pre-wrap; font-weight:700;"}, v?v:"—");
+    if(f.type==="number") return el("div",{style:"font-weight:900;"}, v!=null?String(v):"—");
+    return el("div",{style:"font-weight:900;"}, v?String(v):"—");
+  }
+
+  function renderFieldEdit(f,obj){
+    const v=obj[f.key];
+    if(f.type==="readonly") return el("div",{class:"mono",text:String(v??"—")});
+    if(f.type==="published") return el("div",{class:"hint",text:"公開時刻は編集ではなく「店舗へ公開」操作で記録します（監査ログに残すため）。"});
+    if(f.type==="text"){
+      const inp=el("input",{class:"input",value:v||"",placeholder:f.placeholder||""});
+      inp.addEventListener("input",()=>draft[f.key]=inp.value);
+      return inp;
+    }
+    if(f.type==="number"){
+      const inp=el("input",{class:"input",type:"number",value:v??"",placeholder:f.placeholder||""});
+      inp.addEventListener("input",()=>draft[f.key]=inp.value===""?"":Number(inp.value));
+      return inp;
+    }
+    if(f.type==="date"){
+      const inp=el("input",{class:"input",type:"date",value:v||todayYMD()});
+      inp.addEventListener("input",()=>draft[f.key]=inp.value);
+      return inp;
+    }
+    if(f.type==="textarea"){
+      const ta=el("textarea",{class:"textarea",placeholder:f.placeholder||""});
+      ta.value=v||"";
+      ta.addEventListener("input",()=>draft[f.key]=ta.value);
+      return ta;
+    }
+    if(f.type==="select"){
+      const sel=el("select",{class:"select"});
+      (f.options||[]).forEach(o=>{
+        const opt=el("option",{value:o,text:o}); if(o===v) opt.selected=true; sel.appendChild(opt);
+      });
+      sel.addEventListener("change",()=>draft[f.key]=sel.value);
+      return sel;
+    }
+    if(f.type==="selectPromo"){
+      const sel=el("select",{class:"select"});
+      all.plans.forEach(p=>{
+        const opt=el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`});
+        if(p.promo_id===v) opt.selected=true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change",()=>draft[f.key]=sel.value);
+      return sel;
+    }
+    if(f.type==="storeSelect"){
+      const sel=el("select",{class:"select"});
+      MASTER.stores.forEach(s=>{
+        const opt=el("option",{value:s.store_id,text:`${s.name}（${s.store_id}）`});
+        if(s.store_id===v) opt.selected=true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change",()=>draft[f.key]=sel.value);
+      return sel;
+    }
+    if(f.type==="storepicker"){
+      if(draft.store_set!=="特定10店") return el("div",{class:"hint",text:"—（対象店セットが「特定10店」の時のみ）"});
+      draft.store_ids = Array.isArray(draft.store_ids)?draft.store_ids:[];
+      const list=el("div",{style:"display:flex; flex-wrap:wrap; gap:8px;"});
+      MASTER.stores.forEach(s=>{
+        const on=draft.store_ids.includes(s.store_id);
+        list.appendChild(el("button",{class:"btn btnSmall",style:on?"background:var(--primary-weak); border-color:rgba(37,99,235,.25);":"",onclick:(e)=>{
+          e.preventDefault();
+          const i=draft.store_ids.indexOf(s.store_id);
+          if(i>=0) draft.store_ids.splice(i,1); else draft.store_ids.push(s.store_id);
+          renderDetail();
+        }},[on?"✅ ":"⬜ ",s.name]));
+      });
+      return el("div",{},[list, el("div",{class:"hint",text:"※モックのため簡易選択。実運用は“店セット”マスタが前提。",style:"margin-top:6px;"})]);
+    }
+    return el("div",{class:"hint",text:"未対応"});
+  }
+
+  function selectRow(row){
+    if(editMode && !confirm("編集中です。選択を切り替えると編集内容が破棄されます。続行しますか？")) return;
+    editMode=false; draft=null;
+    if(currentViewKey==="items") selectedKey=row.item_id;
+    else if(currentViewKey==="history") selectedKey=row.event_id;
+    else selectedKey=row.promo_id;
+    renderMain(); renderDetail();
+  }
+
+  function switchView(key){
+    if(editMode && !confirm("編集中です。切り替えると編集内容が破棄されます。続行しますか？")) return;
+    editMode=false; draft=null;
+    currentViewKey=key; selectedKey=null;
+    $("#searchInput").value="";
+    renderAll();
+  }
+
+  function startEdit(){
+    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="history") return;
+    let selected=null;
+    if(currentViewKey==="plans") selected=all.plans.find(p=>p.promo_id===selectedKey);
+    if(currentViewKey==="items") selected=all.items.find(it=>it.item_id===selectedKey);
+    if(currentViewKey==="store") selected={store_id:selectedKey};
+    if(!selected) return;
+    editMode=true;
+    draft=deep(selected);
+    renderDetail();
+  }
+
+  function cancelEdit(){ editMode=false; draft=null; renderDetail(); }
+
+  function validateDraft(){
+    const miss=[];
+    (DETAIL_FORMS[currentViewKey]||[]).forEach(f=>{
+      if(!f.required) return;
+      if(f.type==="storepicker") return;
+      const v=draft?.[f.key];
+      if(v===undefined||v===null||String(v).trim()==="") miss.push(f.label);
+    });
+    if(miss.length){ alert("必須項目が未入力：\n- "+miss.join("\n- ")); return false; }
+    return true;
+  }
+
+  function trySave(){
+    if(!editMode||!draft) return;
+    if(!validateDraft()) return;
+
+    const t=nowISO();
+    if(currentViewKey==="plans"){
+      const i=all.plans.findIndex(p=>p.promo_id===draft.promo_id);
+      const before = i>=0 ? deep(all.plans[i]) : null;
+      draft.updated_at=t;
+      if(i>=0) all.plans[i]=deep(draft); else all.plans.unshift(deep(draft));
+      logEvent({entity:"plan", entity_id:draft.promo_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft)});
+    }
+    if(currentViewKey==="items"){
+      const i=all.items.findIndex(it=>it.item_id===draft.item_id);
+      const before = i>=0 ? deep(all.items[i]) : null;
+      draft.updated_at=t;
+      if(i>=0) all.items[i]=deep(draft); else all.items.unshift(deep(draft));
+      const p=all.plans.find(p=>p.promo_id===draft.promo_id);
+      if(p) p.updated_at=t;
+      logEvent({entity:"item", entity_id:draft.item_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft)});
+    }
+    if(currentViewKey==="store"){ selectedKey=draft.store_id; }
+    saveAll();
+    editMode=false; draft=null;
+    renderAll();
+  }
+
+  function createNew(){
+    if(editMode && !confirm("編集中です。新規作成へ移動すると編集内容が破棄されます。続行しますか？")) return;
+    editMode=false; draft=null;
+
+    if(currentViewKey==="dash" || currentViewKey==="history"){ alert("このビューでは新規作成できません。"); return; }
+    if(currentViewKey==="store"){ alert("店舗ビューは“店舗を選択”するビューです（新規作成なし）。"); return; }
+
+    const t=nowISO();
+    if(currentViewKey==="plans"){
+      const promo_id=uid();
+      const obj={promo_id,kind:MASTER.kinds[0],campaign:"",edition:"A版",issue_date:todayYMD(),period_start:todayYMD(),period_end:todayYMD(),store_set:MASTER.store_sets[0],store_ids:[],slots:60,buyer_deadline:todayYMD(),owner:MASTER.owners[0],status:MASTER.plan_status[0],published_at:null,note:"",created_at:t,updated_at:t};
+      all.plans.unshift(obj); saveAll();
+      logEvent({entity:"plan", entity_id:promo_id, promo_id, action:"create", summary:"create"});
+      selectedKey=promo_id; editMode=true; draft=deep(obj); renderAll(); return;
+    }
+    if(currentViewKey==="items"){
+      if(!all.plans.length){ alert("先に施策計画を作成してください。"); return; }
+      const item_id=iid();
+      const obj={item_id,promo_id:all.plans[0].promo_id,dept:MASTER.depts[0],buyer:MASTER.buyers[0],jan:"",product:"",price:0,regular_price:0,slot:"",item_status:MASTER.item_status[0],note:"",created_at:t,updated_at:t};
+      all.items.unshift(obj); saveAll();
+      logEvent({entity:"item", entity_id:item_id, promo_id:obj.promo_id, action:"create", summary:"create"});
+      selectedKey=item_id; editMode=true; draft=deep(obj); renderAll(); return;
+    }
+  }
+
+  function deleteSelected(){
+    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history") return;
+    if(currentViewKey==="plans"){
+      const p=all.plans.find(x=>x.promo_id===selectedKey); if(!p) return;
+      if(!confirm(`施策を削除：${p.campaign} ${p.edition}\n（関連する明細も削除）`)) return;
+      all.plans=all.plans.filter(x=>x.promo_id!==selectedKey);
+      const removedItems = all.items.filter(it=>it.promo_id===selectedKey);
+      all.items=all.items.filter(it=>it.promo_id!==selectedKey);
+      logEvent({entity:"plan", entity_id:selectedKey, promo_id:selectedKey, action:"delete", summary:`delete plan + items(${removedItems.length})`});
+      selectedKey=null; editMode=false; draft=null; saveAll(); renderAll(); return;
+    }
+    if(currentViewKey==="items"){
+      const it=all.items.find(x=>x.item_id===selectedKey); if(!it) return;
+      if(!confirm(`明細を削除：${it.product||"(無題)"} / ${it.jan||""}`)) return;
+      all.items=all.items.filter(x=>x.item_id!==selectedKey);
+      const p=all.plans.find(p=>p.promo_id===it.promo_id); if(p) p.updated_at=nowISO();
+      logEvent({entity:"item", entity_id:selectedKey, promo_id:it.promo_id, action:"delete", summary:"delete"});
+      selectedKey=null; editMode=false; draft=null; saveAll(); renderAll(); return;
+    }
+  }
+
+  function publishPlan(){
+    if(currentViewKey!=="plans" || !selectedKey) return;
+    const p=all.plans.find(x=>x.promo_id===selectedKey); if(!p) return;
+    if(!confirm(`「確定版として店舗へ公開」を記録します。\n公開後に商品が変わったら“変更あり”として検知されます。\n\n対象：${p.campaign} ${p.edition}`)) return;
+    const before=deep(p);
+    p.published_at=nowISO();
+    p.updated_at=nowISO();
+    saveAll();
+    logEvent({entity:"plan", entity_id:p.promo_id, promo_id:p.promo_id, action:"update", summary:"published_at"});
+    renderAll();
+  }
+
+  // ===== Bulk Upload (paste CSV/TSV) =====
+  function parseDelimited(text){
+    const lines = text.split(/\r?\n/).filter(l=>l.trim()!=="");
+    if(!lines.length) return {header:[], rows:[]};
+    // detect delimiter: tab > comma > semicolon
+    const sample=lines.slice(0,5).join("\n");
+    const tab=(sample.match(/\t/g)||[]).length;
+    const comma=(sample.match(/,/g)||[]).length;
+    const semi=(sample.match(/;/g)||[]).length;
+    const delim = tab>=comma && tab>=semi ? "\t" : (comma>=semi ? "," : ";");
+    const split = (line)=>{
+      // simple CSV split (handles quoted commas minimally)
+      const out=[]; let cur=""; let q=false;
+      for(let i=0;i<line.length;i++){
+        const ch=line[i];
+        if(ch==='"'){ q=!q; continue; }
+        if(!q && ch===delim){ out.push(cur); cur=""; continue; }
+        cur+=ch;
+      }
+      out.push(cur);
+      return out.map(x=>x.trim());
+    };
+    const header=split(lines[0]).map(h=>h.replace(/^\uFEFF/,"").trim());
+    const rows=lines.slice(1).map(l=>split(l));
+    return {delim, header, rows};
+  }
+
+  function openBulkModal(){
+    const promo=$("#f_promo")?.value || "__all";
+    const hint = [
+      "Excel/スプレッドシートの範囲をコピー→ここに貼り付け。",
+      "1行目はヘッダ。区切りは「タブ」推奨（TSV）／CSVも可。",
+      "",
+      "対応ヘッダ例：",
+      "promo_id, dept, buyer, jan, product, price, regular_price, slot, item_status, note",
+      "",
+      "更新ルール（Upsert）：",
+      "- item_id がある行：その item_id を更新",
+      "- item_id が無い行：同一 (promo_id + jan) が存在すれば更新、なければ新規追加",
+      "",
+      `現在フィルタ：施策=${promo==="__all"?"すべて":promo}（promo_idを列に入れると確実）`,
+    ].join("\n");
+
+    const template = [
+      "promo_id\tdept\tbuyer\tjan\tproduct\tprice\tregular_price\tslot\titem_status\tnote",
+      `${all.plans[0]?.promo_id||"PRXXXXXX"}\tグロサリー\tBY_佐々木\t4900000000001\t（例）板チョコ\t98\t128\tP1-1\t提出済\t`,
+      `${all.plans[0]?.promo_id||"PRXXXXXX"}\t日配\tBY_成田\t4900000000002\t（例）牛乳1L\t198\t238\tP1-2\t下書き\t`,
+    ].join("\n");
+
+    openModal(
+      "🧺 明細 一括アップロード（貼り付け）",
+      hint,
+      template,
+      "取り込み（Upsert）",
+      "閉じる",
+      (text, close)=>bulkUpsert(text, close),
+      (text, close)=>close()
+    );
+  }
+
+  function bulkUpsert(text, close){
+    const parsed=parseDelimited(text);
+    if(!parsed.header.length){ alert("貼り付け内容が空です。"); return; }
+    const h=parsed.header.map(x=>x.toLowerCase());
+    const idx = (name)=>h.indexOf(name.toLowerCase());
+    const need = ["promo_id","dept","buyer","jan","product","price","item_status"].filter(k=>idx(k)<0);
+    if(need.length){
+      alert("必須ヘッダが不足：\n- "+need.join("\n- ")+"\n\n例：promo_id, dept, buyer, jan, product, price, item_status");
+      return;
+    }
+
+    const t=nowISO();
+    let created=0, updated=0, skipped=0;
+    const changes=[];
+
+    parsed.rows.forEach((row, rIdx)=>{
+      const get=(k)=>row[idx(k)] ?? "";
+      const promo_id=(get("promo_id")||"").trim();
+      const jan=(get("jan")||"").replace(/\D/g,"").slice(0,13);
+      const dept=(get("dept")||"").trim();
+      const buyer=(get("buyer")||"").trim();
+      const product=(get("product")||"").trim();
+      const price=Number((get("price")||"").toString().replace(/[^0-9.]/g,""));
+      const regular_price=Number((get("regular_price")||"").toString().replace(/[^0-9.]/g,"")) || 0;
+      const slot=(get("slot")||"").trim();
+      const item_status=(get("item_status")||"下書き").trim();
+      const note=(get("note")||"").trim();
+      const item_id_raw = (idx("item_id")>=0 ? (get("item_id")||"").trim() : "");
+
+      if(!promo_id || !jan || !dept || !buyer || !product || !Number.isFinite(price)){
+        skipped++;
+        return;
+      }
+      if(!all.plans.some(p=>p.promo_id===promo_id)){
+        skipped++;
+        return;
+      }
+
+      let target=null, before=null, action="create";
+      if(item_id_raw){
+        target = all.items.find(it=>it.item_id===item_id_raw) || null;
+      }
+      if(!target){
+        target = all.items.find(it=>it.promo_id===promo_id && String(it.jan||"")===jan) || null;
+      }
+      if(target){
+        before=deep(target);
+        action="update";
+        target.dept=dept; target.buyer=buyer; target.jan=jan; target.product=product;
+        target.price=price; target.regular_price=regular_price; target.slot=slot;
+        target.item_status=item_status; target.note=note; target.updated_at=t;
+        updated++;
+        changes.push({item_id:target.item_id, jan, action, diff:summarizeDiff(before,target)});
+        logEvent({entity:"item", entity_id:target.item_id, promo_id, action:"update", summary:`bulk: ${summarizeDiff(before,target)}`});
+      }else{
+        const obj={item_id:iid(), promo_id, dept, buyer, jan, product, price, regular_price, slot, item_status, note, created_at:t, updated_at:t};
+        all.items.unshift(obj);
+        created++;
+        changes.push({item_id:obj.item_id, jan, action:"create", diff:"create"});
+        logEvent({entity:"item", entity_id:obj.item_id, promo_id, action:"create", summary:"bulk: create"});
+      }
+      const p=all.plans.find(p=>p.promo_id===promo_id);
+      if(p) p.updated_at=t;
+    });
+
+    saveAll();
+    logEvent({
+      entity:"bulk", entity_id:"bulk_upsert", promo_id:null, action:"upsert",
+      summary:`bulk_upsert created=${created}, updated=${updated}, skipped=${skipped}`,
+      meta:{created, updated, skipped, sample:changes.slice(0,20)}
+    });
+
+    close();
+    renderAll();
+    alert(`一括取込 完了\ncreated=${created}\nupdated=${updated}\nskipped=${skipped}\n\n※詳細は「変更履歴」ビューで確認できます`);
+  }
+
+  // Modal
+  function openModal(title, hint, initialText, primaryText, secondaryText, onPrimary, onSecondary){
+    $("#modalTitle").textContent=title;
+    $("#modalHint").textContent=hint;
+    $("#modalTextarea").value=initialText||"";
+    $("#modalPrimary").textContent=primaryText||"OK";
+    $("#modalSecondary").textContent=secondaryText||"Cancel";
+    $("#modalBack").classList.add("show");
+    const close=()=>$("#modalBack").classList.remove("show");
+    $("#modalClose").onclick=close;
+    $("#modalPrimary").onclick=()=>onPrimary?.($("#modalTextarea").value, close);
+    $("#modalSecondary").onclick=()=>onSecondary?.($("#modalTextarea").value, close);
+    $("#modalTextarea").focus();
+  }
+
+  function showItemsModalForPromo(promo_id){
+    const p=all.plans.find(x=>x.promo_id===promo_id); if(!p) return;
+    const list=all.items.filter(it=>it.promo_id===promo_id).sort((a,b)=>String(a.dept||"").localeCompare(String(b.dept||"")));
+    const text=[
+      `施策: ${p.promo_id}｜${p.campaign} ${p.edition}`,
+      `種別: ${p.kind} / 発行: ${p.issue_date} / 状態: ${p.status}`,
+      `対象店: ${joinStoresLabel(p)} / BY締切: ${p.buyer_deadline}`,
+      `公開: ${p.published_at?shortDT(p.published_at):"未公開"}${p.published_at&&changedAfterPublish(p)?"（★公開後に変更あり）":""}`,
+      "",
+      "商品明細:",
+      ...list.map(it=>`- [${it.item_status}] ${it.dept}/${it.buyer}  ${it.jan}  ${it.product}  ¥${Number(it.price||0).toLocaleString()}  (${it.slot||"-"})`)
+    ].join("\n");
+
+    openModal("店舗ビュー：商品一覧（閲覧）","店が「何が載るか」を見る想定。実運用は“確定版のみ公開”に寄せるのが安全。",text,"コピー","閉じる",
+      async (val, close)=>{
+        try{ await navigator.clipboard.writeText(val); alert("コピーしました。"); }catch(e){ alert("コピーできませんでした。手動でコピーしてください。"); }
+      },
+      (val, close)=>close()
+    );
+  }
+
+  function showPromoChanges(promo_id){
+    const logs=logsForPromo(promo_id).slice(0,60);
+    const p=all.plans.find(x=>x.promo_id===promo_id);
+    const text=[
+      `施策: ${promo_id}｜${p?(p.campaign+" "+p.edition):""}`,
+      `公開: ${p?.published_at?shortDT(p.published_at):"未"} / 変更検知: ${p?.published_at && changedAfterPublish(p)?"あり":"なし"}`,
+      "",
+      "変更ログ（新しい順）:",
+      ...logs.map(l=>`- ${shortDT(l.ts)} / ${l.actor} / ${l.entity}:${l.action} / ${l.summary}`)
+    ].join("\n");
+    openModal("変更履歴（この施策）","公開後の変更がある場合、発注ミスの温床になるので“通知”が必要。まずは履歴で可視化。",text,"コピー","閉じる",
+      async (val, close)=>{
+        try{ await navigator.clipboard.writeText(val); alert("コピーしました。"); }catch(e){ alert("コピーできませんでした。手動でコピーしてください。"); }
+      },
+      (val, close)=>close()
+    );
+  }
+
+  function exportJSON(){
+    const payload={exported_at:nowISO(), note:"promo_hub_mock_v3 export", data:all, audit};
+    openModal("Export JSON","このJSONを保存すれば、別PC/別ブラウザへ持ち運べます（監査ログも含む）。",JSON.stringify(payload,null,2),"コピー","閉じる",
+      async (text, close)=>{
+        try{ await navigator.clipboard.writeText(text); alert("コピーしました。"); }catch(e){ alert("コピーできませんでした。手動でコピーしてください。"); }
+      },
+      (text, close)=>close()
+    );
+  }
+
+  function importJSON(){
+    openModal("Import JSON","貼り付けたJSONでローカルDBを上書きします（現データは消えます）。","", "取り込み（上書き）","閉じる",
+      (text, close)=>{
+        try{
+          const obj=JSON.parse(text);
+          if(!obj?.data) throw new Error("data missing");
+          const d=obj.data;
+          if(!Array.isArray(d.plans)||!Array.isArray(d.items)) throw new Error("shape invalid");
+          const layouts = Array.isArray(d.layouts)?d.layouts:[];
+          all={plans:d.plans, items:d.items, layouts};
+          audit = Array.isArray(obj.audit)?obj.audit:[];
+          saveAll(); saveAudit();
+          selectedKey=null; editMode=false; draft=null;
+          close(); renderAll(); alert("取り込みました。");
+        }catch(e){ alert("JSONの形式が不正です。"); }
+      },
+      (text, close)=>close()
+    );
+  }
+
+  function resetAll(){
+    if(!confirm("ダミーデータへ初期化します。現在のデータは消えます。よろしいですか？")) return;
+    all=seedDummy(); saveAll();
+    audit=[]; saveAudit();
+    selectedKey=null; editMode=false; draft=null;
+    renderAll();
+  }
+
+  function renderMain(){
+    if(currentViewKey==="dash"){ renderDashboard(); renderDetail(); return; }
+    if(currentViewKey==="layout"){ renderLayout(); renderDetail(); return; }
+    renderTable(); renderDetail();
+  }
+  function renderAll(){
+    renderNav(); renderHeader(); renderFilters(); renderMain();
+
+    // top buttons visibility
+    $("#newBtn").style.display = (currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="layout") ? "none" : "";
+    $("#newBtn").disabled = (currentViewKey==="store");
+    $("#bulkBtn").style.display = (currentViewKey==="items") ? "" : "none";
+  }
+
+  // Bind
+  function bind(){
+    $("#toggleTheme").addEventListener("click", toggleTheme);
+    $("#searchInput").addEventListener("input", ()=>renderMain());
+    $("#newBtn").addEventListener("click", createNew);
+
+    $("#bulkBtn").addEventListener("click", openBulkModal);
+
+    $("#editBtn").addEventListener("click", startEdit);
+    $("#saveBtn").addEventListener("click", trySave);
+    $("#cancelBtn").addEventListener("click", cancelEdit);
+    $("#deleteBtn").addEventListener("click", deleteSelected);
+    $("#publishBtn").addEventListener("click", publishPlan);
+
+    $("#exportBtn").addEventListener("click", exportJSON);
+    $("#importBtn").addEventListener("click", importJSON);
+    $("#resetBtn").addEventListener("click", resetAll);
+    $("#layoutBgInput").addEventListener("change",(e)=>{ const f=e.target.files?.[0]; if(f) setLayoutBackgroundFromFile(f); });
+
+    $("#modalBack").addEventListener("click",(e)=>{ if(e.target===$("#modalBack")) $("#modalBack").classList.remove("show"); });
+
+    $("#userName").addEventListener("input", (e)=>setUser(e.target.value));
+
+    document.addEventListener("keydown",(e)=>{
+      if(e.key==="Escape"){
+        if($("#modalBack").classList.contains("show")) $("#modalBack").classList.remove("show");
+        if(editMode) cancelEdit();
+      }
+      if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s"){ e.preventDefault(); trySave(); }
+    });
+  }
+
+  // Init
+  loadTheme();
+  const savedUser=localStorage.getItem(USER_KEY)||"";
+  $("#userName").value=savedUser;
+  bind();
+  renderAll();
+})();
+</script>
+
+  <input id="layoutBgInput" type="file" accept="image/*" style="display:none" />
+</body>
+</html>
