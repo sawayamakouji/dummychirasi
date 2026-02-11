@@ -182,6 +182,13 @@
       </div>
       <div class="sidebarFooter">
         <input class="input inputTiny" id="userName" placeholder="あなた（例：BY_佐々木 / 営業企画A）" />
+        <select class="select inputTiny" id="roleSelect" title="権限ロールを明示的に切り替え">
+          <option value="auto">ロール: 自動判定（ユーザー名）</option>
+          <option value="PLANNER">ロール: 営業企画</option>
+          <option value="BUYER">ロール: バイヤー</option>
+          <option value="STORE_VIEWER">ロール: 店舗閲覧</option>
+          <option value="ADMIN">ロール: 管理者</option>
+        </select>
         <button class="btn" id="exportBtn">⬇️ Export</button>
         <button class="btn" id="importBtn">⬆️ Import</button>
         <button class="btn btnDanger" id="resetBtn">🧨 初期化</button>
@@ -258,7 +265,13 @@
   const STORAGE_KEY = "promo_hub_mock_v3";
   const THEME_KEY = "promo_hub_theme";
   const USER_KEY = "promo_hub_user";
+  const ROLE_KEY = "promo_hub_role";
   const LOG_KEY = "promo_hub_audit_v3";
+  const PP_EVENT_KEY = "promo_hub_post_publish_events_v1";
+  const ER_KEY = "promo_hub_emergency_requests_v1";
+  const NOTIF_KEY = "promo_hub_notification_queue_v1";
+  const NOTIF_AUTO_RETRY_MIN = 30;
+  const NOTIF_MAX_RETRY = 3;
 
   const VIEWS = {
     plans:{icon:"🗓️",name:"施策計画（チラシ/クーポン）",desc:"営業企画：いつ/どの版/どの店/枠数/締切/確定。公開後の変更検知も。",columns:["promo_id","kind","campaign","edition","issue_date","store_set","slots","fill","deadline","risk","published","owner","status","updated_at"]},
@@ -266,6 +279,8 @@
     layout:{icon:"🧩",name:"紙面レイアウト（枠編集）",desc:"チラシごとの枠（位置/サイズ）をオーバーレイ編集。枠IDを商品明細のslotと一致させると、埋まり/変更が見える。",columns:[]},
     store:{icon:"🏬",name:"店舗ビュー",desc:"店：自店の「いつどのチラシに何が載るか」。公開後に変わったら検知。",columns:["issue_date","promo_id","campaign","edition","kind","status","fill","deadline","changed"]},
     dash:{icon:"📊",name:"進捗ダッシュボード",desc:"埋まり率×締切リスクを俯瞰（今日時点）。",columns:[]},
+    requests:{icon:"🚨",name:"緊急変更申請",desc:"施策横断で申請を管理。未処理の承認/却下を実施。",columns:["requested_at","request_id","promo_id","entity","requested_by","status","grant_state","used_at","used_by","reason","reviewed_at"]},
+    notifications:{icon:"🔔",name:"通知キュー",desc:"公開後変更/緊急申請の通知待ちキュー。送信待ちを追跡。",columns:["created_at","sent_at","next_retry_at","retry_count","type","severity","status","promo_id","request_id","summary"]},
     history:{icon:"🕘",name:"変更履歴（監査ログ）",desc:"作成/更新/削除/一括取込のログ。発注ミス防止の必須部品。",columns:["ts","actor","entity","action","summary"]}
   };
 
@@ -326,6 +341,7 @@
   const uid = ()=>"PR"+Math.random().toString(16).slice(2,8).toUpperCase();
   const iid = ()=>"IT"+Math.random().toString(16).slice(2,10).toUpperCase();
   const eid = ()=>"EV"+Math.random().toString(16).slice(2,10).toUpperCase();
+  const rid = ()=>"REQ-"+Math.random().toString(16).slice(2,12).toUpperCase();
 
   const badge = (text, kind)=>el("span",{class:`badge ${kind||"warn"}`,text});
   const progressBar = (rate)=>{
@@ -337,22 +353,201 @@
   function getUser(){
     return ($("#userName").value||localStorage.getItem(USER_KEY)||"local_user").trim() || "local_user";
   }
+  function getRole(){
+    const forced = localStorage.getItem(ROLE_KEY) || "auto";
+    if(forced!=="auto") return forced;
+    const u=getUser().toLowerCase();
+    if(/^admin[_:\-]/.test(u) || u.includes("管理者")) return "ADMIN";
+    if(/^by[_:\-]/.test(u) || u.includes("buyer") || u.includes("バイヤー")) return "BUYER";
+    if(/^store[_:\-]/.test(u) || u.includes("店舗")) return "STORE_VIEWER";
+    return "PLANNER";
+  }
+  function setRole(v){
+    localStorage.setItem(ROLE_KEY, v || "auto");
+  }
+  function roleLabel(role){
+    return ({ADMIN:"管理者",BUYER:"バイヤー",STORE_VIEWER:"店舗閲覧",PLANNER:"営業企画"}[role]||role);
+  }
+  function hasPerm(perm, ctx={}){
+    const role=getRole();
+    const isAdmin=role==="ADMIN";
+    const isPlanner=role==="PLANNER";
+    const isBuyer=role==="BUYER";
+    if(isAdmin) return true;
+    if(perm==="plan:create"||perm==="plan:edit"||perm==="plan:delete"||perm==="plan:publish") return isPlanner;
+    if(perm==="item:create"||perm==="item:edit"||perm==="item:delete"||perm==="item:bulk") return isPlanner||isBuyer;
+    if(perm==="layout:edit") return isPlanner||isBuyer;
+    if(perm==="data:export") return false;
+    if(perm==="data:import") return false;
+    if(perm==="data:reset") return false;
+    if(perm==="override:deadline") return false;
+    return true;
+  }
+  function ensurePerm(perm, message){
+    if(hasPerm(perm)) return true;
+    alert(message || `権限不足（${roleLabel(getRole())}）：${perm}`);
+    return false;
+  }
+
+  const PLAN_TRANSITIONS={
+    "企画中":["BY入力中"],
+    "BY入力中":["企画中","カンプ作成中"],
+    "カンプ作成中":["BY入力中","確定"],
+    "確定":["入稿/印刷","カンプ作成中"],
+    "入稿/印刷":[]
+  };
+  function canPlanTransition(from,to){
+    if(!from||!to||from===to) return true;
+    return (PLAN_TRANSITIONS[from]||[]).includes(to);
+  }
+  function canSetPlanStatus(from,to){
+    const role=getRole();
+    if(role==="ADMIN") return true;
+    if(to==="確定") return false;
+    if(to==="入稿/印刷") return role==="PLANNER";
+    return role==="PLANNER";
+  }
+  function isPastDeadline(ymd){
+    if(!ymd) return false;
+    const t=new Date(ymd+"T23:59:59").getTime();
+    return Date.now()>t;
+  }
   function setUser(v){
     localStorage.setItem(USER_KEY, v);
   }
 
-  // ===== Audit Log =====
+  // ===== Audit Log / Post Publish Events =====
   let audit = loadAudit();
+  let postPublishEvents = loadPostPublishEvents();
+  let emergencyRequests = loadEmergencyRequests();
+  let notificationQueue = loadNotificationQueue();
   function loadAudit(){
     const raw=localStorage.getItem(LOG_KEY);
+    if(!raw) return [];
+    try{
+      const arr=JSON.parse(raw);
+      return Array.isArray(arr)?arr.map(x=>({
+        actor_role:x.actor_role||"UNKNOWN",
+        actor_user_id:x.actor_user_id||x.actor||"unknown",
+        request_id:x.request_id||null,
+        before_json:(x.before_json===undefined?null:x.before_json),
+        after_json:(x.after_json===undefined?null:x.after_json),
+        reason:x.reason||null,
+        source_ip:x.source_ip||null,
+        user_agent:x.user_agent||null,
+        ...x
+      })) : [];
+    }catch(e){ return []; }
+  }
+  function saveAudit(){
+    localStorage.setItem(LOG_KEY, JSON.stringify(audit.slice(-1200)));
+  }
+  function loadPostPublishEvents(){
+    const raw=localStorage.getItem(PP_EVENT_KEY);
     if(!raw) return [];
     try{
       const arr=JSON.parse(raw);
       return Array.isArray(arr)?arr:[];
     }catch(e){ return []; }
   }
-  function saveAudit(){
-    localStorage.setItem(LOG_KEY, JSON.stringify(audit.slice(-1200)));
+  function savePostPublishEvents(){
+    localStorage.setItem(PP_EVENT_KEY, JSON.stringify(postPublishEvents.slice(-1200)));
+  }
+  function loadNotificationQueue(){
+    const raw=localStorage.getItem(NOTIF_KEY);
+    if(!raw) return [];
+    try{
+      const arr=JSON.parse(raw);
+      return Array.isArray(arr)?arr:[];
+    }catch(e){ return []; }
+  }
+  function saveNotificationQueue(){
+    localStorage.setItem(NOTIF_KEY, JSON.stringify(notificationQueue.slice(-1200)));
+  }
+  const NOTIFICATION_TEMPLATES={
+    "promotion.post_publish_changed.v1":({promo_id, payload})=>`公開後変更通知: ${payload?.action||"update"} / ${promo_id||"-"}`,
+    "emergency.escalated.v1":({request_id})=>`緊急変更申請のエスカレーション: ${request_id||"-"}`,
+    "default":({type,promo_id})=>`通知: ${type||"unknown"} / ${promo_id||"-"}`
+  };
+  function renderNotificationSummary({type, promo_id, request_id, payload, summary}){
+    if(summary && String(summary).trim()) return String(summary).trim();
+    const f=NOTIFICATION_TEMPLATES[type]||NOTIFICATION_TEMPLATES.default;
+    return f({type,promo_id,request_id,payload});
+  }
+  function nextRetryAtISO(base=Date.now()){
+    return new Date(base + NOTIF_AUTO_RETRY_MIN*60*1000).toISOString();
+  }
+  function enqueueNotification({type, severity="MEDIUM", promo_id=null, request_id=null, summary="", payload=null}){
+    const now=nowISO();
+    const n={
+      notification_id:"nq_"+eid().toLowerCase(),
+      created_at:now,
+      type,
+      severity,
+      status:"PENDING",
+      promo_id,
+      request_id,
+      summary:renderNotificationSummary({type,promo_id,request_id,payload,summary}),
+      payload:payload||null,
+      sent_at:null,
+      sent_by:null,
+      retry_count:0,
+      last_retry_at:null,
+      next_retry_at:nextRetryAtISO(Date.now()),
+      failed_at:null
+    };
+    notificationQueue.unshift(n);
+    saveNotificationQueue();
+    logEvent({entity:"notification", entity_id:n.notification_id, action:"queue", promo_id, summary:`notification queued: ${type}`, meta:{severity,status:n.status,retry_count:n.retry_count}, before_json:null, after_json:deep(n), request_id});
+    return n;
+  }
+  function shouldRetryNotification(n, nowMs=Date.now()){
+    if(!n || n.status!=="PENDING") return false;
+    if((Number(n.retry_count)||0) >= NOTIF_MAX_RETRY) return false;
+    const due = new Date(n.next_retry_at || n.created_at || 0).getTime();
+    if(!Number.isFinite(due) || !due) return false;
+    return nowMs >= due;
+  }
+  function retryNotification(notification_id, {manual=false}={}){
+    const n=notificationQueue.find(x=>x.notification_id===notification_id);
+    if(!n || n.status!=="PENDING") return false;
+    const before=deep(n);
+    n.retry_count=(Number(n.retry_count)||0)+1;
+    n.last_retry_at=nowISO();
+    if(n.retry_count>=NOTIF_MAX_RETRY){
+      n.status="FAILED";
+      n.failed_at=nowISO();
+      n.next_retry_at=null;
+    }else{
+      n.next_retry_at=nextRetryAtISO();
+    }
+    saveNotificationQueue();
+    logEvent({entity:"notification", entity_id:n.notification_id, action:"retry", promo_id:n.promo_id, summary:`notification retry ${manual?"manual":"auto"}`, before_json:before, after_json:deep(n), request_id:n.request_id, meta:{manual, retry_count:n.retry_count, status:n.status}});
+    return true;
+  }
+  function processNotificationRetries(){
+    const now=Date.now();
+    let changed=0;
+    notificationQueue.forEach(n=>{
+      if(shouldRetryNotification(n, now) && retryNotification(n.notification_id,{manual:false})) changed++;
+    });
+    return changed;
+  }
+  function markNotificationSent(notification_id){
+    if(!hasPerm("override:deadline")){
+      alert("この操作を実行する権限がありません。");
+      return false;
+    }
+    const n=notificationQueue.find(x=>x.notification_id===notification_id);
+    if(!n || n.status==="SENT") return false;
+    const before=deep(n);
+    n.status="SENT";
+    n.sent_at=nowISO();
+    n.sent_by=getUser();
+    n.next_retry_at=null;
+    saveNotificationQueue();
+    logEvent({entity:"notification", entity_id:n.notification_id, action:"send", promo_id:n.promo_id, summary:`notification sent: ${n.type}`, before_json:before, after_json:deep(n), request_id:n.request_id});
+    return true;
   }
   function summarizeDiff(before, after){
     if(!before) return "create";
@@ -365,24 +560,259 @@
     const core = changed.slice(0,8).join(", ");
     return changed.length>8 ? `${core} …（計${changed.length}項目）` : core;
   }
-  function logEvent({entity, entity_id, action, summary, meta, promo_id}){
+  function logEvent({entity, entity_id, action, summary, meta, promo_id, before_json=null, after_json=null, reason=null, request_id=null}){
     const ev={
       event_id:eid(),
       ts:nowISO(),
       actor:getUser(),
+      actor_user_id:getUser(),
+      actor_role:getRole(),
       entity, entity_id, action,
       promo_id: promo_id || null,
       summary: summary || "",
-      meta: meta || null
+      meta: meta || null,
+      before_json,
+      after_json,
+      reason,
+      request_id: request_id || rid(),
+      source_ip:null,
+      user_agent:navigator.userAgent || ""
     };
     audit.push(ev);
     saveAudit();
+    return ev;
+  }
+
+  function changedFields(before, after){
+    if(!before || !after) return [];
+    const keys = new Set([...Object.keys(before||{}), ...Object.keys(after||{})]);
+    const out=[];
+    keys.forEach(k=>{ if(JSON.stringify(before[k])!==JSON.stringify(after[k])) out.push(k); });
+    return out;
+  }
+
+  function loadEmergencyRequests(){
+    const raw=localStorage.getItem(ER_KEY);
+    if(!raw) return [];
+    try{
+      const arr=JSON.parse(raw);
+      return Array.isArray(arr)?arr:[];
+    }catch(e){ return []; }
+  }
+  function saveEmergencyRequests(){
+    localStorage.setItem(ER_KEY, JSON.stringify(emergencyRequests.slice(-1200)));
+  }
+  function emergencyId(){
+    return "ER-"+Math.random().toString(16).slice(2,10).toUpperCase();
+  }
+  function requestEmergencyChange({promo_id, entity="item", entity_id=null, reason=""}){
+    const p=all.plans.find(x=>x.promo_id===promo_id);
+    if(!p) return null;
+    const req={
+      request_id:emergencyId(),
+      promo_id,
+      entity,
+      entity_id,
+      reason:reason||"緊急変更申請",
+      status:"REQUESTED",
+      requested_at:nowISO(),
+      requested_by:getUser(),
+      requested_role:getRole(),
+      published_at:p.published_at || null
+    };
+    emergencyRequests.unshift(req);
+    saveEmergencyRequests();
+    logEvent({
+      entity:"approval",
+      entity_id:req.request_id,
+      action:"request",
+      promo_id,
+      summary:`emergency_request: ${entity}${entity_id?`(${entity_id})`:""}`,
+      meta:{status:req.status, reason:req.reason},
+      before_json:null,
+      after_json:deep(req),
+      reason:req.reason,
+      request_id:req.request_id
+    });
+    return req;
+  }
+  function requestsForPromo(promo_id){
+    return emergencyRequests.filter(r=>r.promo_id===promo_id).slice().sort((a,b)=>String(b.requested_at).localeCompare(String(a.requested_at)));
+  }
+  const REQUEST_STATUS_TRANSITIONS={
+    REQUESTED:["APPROVED","REJECTED"],
+    APPROVED:["USED"],
+    REJECTED:[],
+    USED:[]
+  };
+  const REQUEST_REVIEW_SLA_MIN=60;
+
+  function requestElapsedMinutes(req){
+    const t=new Date(req?.requested_at||0).getTime();
+    if(!Number.isFinite(t) || !t) return null;
+    return Math.max(0, Math.floor((Date.now()-t)/60000));
+  }
+  function isRequestOverdue(req){
+    const mins=requestElapsedMinutes(req);
+    return req?.status==="REQUESTED" && mins!==null && mins>REQUEST_REVIEW_SLA_MIN;
+  }
+
+  function transitionEmergencyRequest(request_id, to_status, {reason=null, note=null, actorRequiredPerm=null}={}){
+    if(actorRequiredPerm && !hasPerm(actorRequiredPerm)){
+      alert("この操作を実行する権限がありません。");
+      return null;
+    }
+    const r=emergencyRequests.find(x=>x.request_id===request_id);
+    if(!r) return null;
+    const allowed=REQUEST_STATUS_TRANSITIONS[r.status]||[];
+    if(!allowed.includes(to_status)) return null;
+
+    const before=deep(r);
+    if(to_status==="APPROVED" || to_status==="REJECTED"){
+      r.reviewed_at=nowISO();
+      r.reviewed_by=getUser();
+      r.reviewed_role=getRole();
+    }
+    if(to_status==="REJECTED") r.reject_reason=reason||"";
+    if(to_status==="USED"){
+      r.used_at=nowISO();
+      r.used_by=getUser();
+      r.used_note=note||"post-publish update";
+    }
+    r.status=to_status;
+    saveEmergencyRequests();
+    return {request:r, before};
+  }
+
+  function approveEmergencyRequest(request_id){
+    const tx=transitionEmergencyRequest(request_id,"APPROVED",{actorRequiredPerm:"override:deadline"});
+    if(!tx) return false;
+    const r=tx.request;
+    logEvent({entity:"approval", entity_id:r.request_id, action:"approve", promo_id:r.promo_id, summary:`emergency_request approved`, before_json:tx.before, after_json:deep(r), reason:r.reason, request_id:r.request_id});
+    return true;
+  }
+  function rejectEmergencyRequest(request_id){
+    if(!hasPerm("override:deadline")){
+      alert("この操作を実行する権限がありません。");
+      return false;
+    }
+    const reason=prompt("却下理由（任意）","要件不足のため差戻し");
+    const tx=transitionEmergencyRequest(request_id,"REJECTED",{reason:reason||"", actorRequiredPerm:"override:deadline"});
+    if(!tx) return false;
+    const r=tx.request;
+    logEvent({entity:"approval", entity_id:r.request_id, action:"reject", promo_id:r.promo_id, summary:`emergency_request rejected`, before_json:tx.before, after_json:deep(r), reason:r.reject_reason||r.reason, request_id:r.request_id});
+    return true;
+  }
+  function escalateEmergencyRequest(request_id){
+    if(!hasPerm("override:deadline")){
+      alert("この操作を実行する権限がありません。");
+      return false;
+    }
+    const r=emergencyRequests.find(x=>x.request_id===request_id);
+    if(!r || r.status!=="REQUESTED") return false;
+    const before=deep(r);
+    r.escalated_at=nowISO();
+    r.escalated_by=getUser();
+    r.escalated_count=(Number(r.escalated_count)||0)+1;
+    saveEmergencyRequests();
+    logEvent({entity:"approval", entity_id:r.request_id, action:"escalate", promo_id:r.promo_id, summary:"emergency_request escalated", before_json:before, after_json:deep(r), reason:r.reason, request_id:r.request_id});
+    enqueueNotification({type:"emergency.escalated.v1", severity:"HIGH", promo_id:r.promo_id, request_id:r.request_id, summary:`緊急変更申請のエスカレーション: ${r.request_id}`, payload:{reason:r.reason, escalated_count:r.escalated_count}});
+    return true;
+  }
+  function findUsableEmergencyApproval({promo_id, entity, entity_id}){
+    return emergencyRequests.find(r=>
+      r.promo_id===promo_id &&
+      r.entity===entity &&
+      r.status==="APPROVED" &&
+      !r.used_at &&
+      (!r.entity_id || r.entity_id===entity_id)
+    ) || null;
+  }
+  function consumeEmergencyApproval(req, note){
+    if(!req) return false;
+    const tx=transitionEmergencyRequest(req.request_id,"USED",{note:note||"post-publish update"});
+    if(!tx) return false;
+    const updated=tx.request;
+    logEvent({entity:"approval", entity_id:updated.request_id, action:"use", promo_id:updated.promo_id, summary:"emergency_request consumed", before_json:tx.before, after_json:deep(updated), reason:updated.used_note, request_id:updated.request_id});
+    return true;
+  }
+  function resolveEmergencyGrant({promo_id, entity, entity_id}){
+    // strict match -> entity generic -> plan-level fallback
+    return (
+      findUsableEmergencyApproval({promo_id, entity, entity_id}) ||
+      findUsableEmergencyApproval({promo_id, entity, entity_id:null}) ||
+      findUsableEmergencyApproval({promo_id, entity:"plan", entity_id:promo_id}) ||
+      findUsableEmergencyApproval({promo_id, entity:"plan", entity_id:null}) ||
+      null
+    );
+  }
+
+  function ensurePostPublishGrantOrRequest({promo_id, entity, entity_id, reasonDefault}){
+    const plan=all.plans.find(x=>x.promo_id===promo_id);
+    if(!plan?.published_at || hasPerm("override:deadline")) return {ok:true, grant:null};
+    const grant=resolveEmergencyGrant({promo_id, entity, entity_id});
+    if(grant) return {ok:true, grant};
+    if(confirm("公開後データの直接編集には承認済み申請が必要です。\n緊急変更申請を作成しますか？")){
+      const reason=prompt("変更理由（必須）", reasonDefault||"公開後のレイアウト変更が必要");
+      if(reason && reason.trim()){
+        const req=requestEmergencyChange({promo_id, entity, entity_id, reason:reason.trim()});
+        if(req) alert(`申請を作成しました: ${req.request_id}`);
+      }
+    }
+    return {ok:false, grant:null};
+  }
+  function emitPostPublishEvent({promo_id, entity, entity_id, action, before_json=null, after_json=null, reason=null}){
+    const p=all.plans.find(x=>x.promo_id===promo_id);
+    if(!p || !p.published_at) return null;
+    const fields = changedFields(before_json, after_json);
+    const sev = (fields.includes("price")||fields.includes("slot")||fields.includes("store_set")||fields.includes("store_ids")) ? "HIGH" : "MEDIUM";
+    const stores = p.store_set==="特定10店" ? (p.store_ids||[]) : MASTER.stores.filter(s=>storeMatchesPlan(s,p)).map(s=>s.store_id);
+    const ev={
+      event_id:"evt_"+eid().toLowerCase(),
+      event_type:"promotion.post_publish_changed.v1",
+      occurred_at:nowISO(),
+      actor:{user_id:getUser(), role:getRole(), name:getUser()},
+      promotion:{promo_id:p.promo_id, campaign:p.campaign, edition:p.edition, issue_date:p.issue_date, published_at:p.published_at},
+      change_summary:{severity:sev, changed_fields:fields.length?fields:["unknown"], reason:reason||"運用変更"},
+      diffs:fields.map(f=>({entity, entity_id, field:f, before:before_json?.[f]??null, after:after_json?.[f]??null})),
+      impact:{store_scope:{store_set:p.store_set, store_ids:stores}, affected_store_count:stores.length, effective_from:nowISO()},
+      trace:{request_id:rid(), source:"web-app"},
+      action
+    };
+    postPublishEvents.push(ev);
+    savePostPublishEvents();
+    logEvent({
+      entity:"notification",
+      entity_id:ev.event_id,
+      action:"create",
+      promo_id,
+      summary:`post_publish_changed: ${entity}:${action}`,
+      meta:{event_type:ev.event_type, changed_fields:ev.change_summary.changed_fields, severity:sev},
+      before_json,
+      after_json,
+      reason
+    });
+    enqueueNotification({
+      type:ev.event_type,
+      severity:sev,
+      promo_id,
+      request_id:ev.trace.request_id,
+      summary:`公開後変更通知: ${entity}:${action}`,
+      payload:ev
+    });
+    return ev;
   }
   function logsForPromo(promo_id){
     return audit.filter(x=>x.promo_id===promo_id).slice().reverse();
   }
   function logsForEntity(entity, id){
     return audit.filter(x=>x.entity===entity && x.entity_id===id).slice().reverse();
+  }
+  function notificationsForRequest(request_id){
+    return notificationQueue.filter(n=>n.request_id===request_id).slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+  }
+  function notificationsForPromo(promo_id){
+    return notificationQueue.filter(n=>n.promo_id===promo_id).slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   }
 
   function joinStoresLabel(plan){
@@ -564,6 +994,7 @@
     ],
     store:[{key:"store_id",label:"店舗",type:"storeSelect",required:true}],
     dash:[],
+    requests:[],
     history:[]
   };
 
@@ -579,7 +1010,7 @@
   function renderNav(){
     const nav=$("#nav"); nav.innerHTML="";
     for(const [k,v] of Object.entries(VIEWS)){
-      const count = (k==="plans")?all.plans.length:(k==="items")?all.items.length:(k==="history")?audit.length:"";
+      const count = (k==="plans")?all.plans.length:(k==="items")?all.items.length:(k==="history")?audit.length:(k==="requests")?emergencyRequests.length:(k==="notifications")?notificationQueue.filter(n=>n.status==="PENDING").length:"";
       nav.appendChild(el("div",{class:`navItem ${k===currentViewKey?"active":""}`,onclick:()=>switchView(k)},[
         el("div",{class:"name"},[el("span",{text:v.icon}), el("span",{text:v.name})]),
         el("span",{class:"pill",text:count!==""?String(count):" "})
@@ -587,8 +1018,9 @@
     }
   }
   function renderHeader(){
+    const role=roleLabel(getRole());
     $("#viewTitle").textContent=VIEWS[currentViewKey].name;
-    $("#viewDesc").textContent=VIEWS[currentViewKey].desc;
+    $("#viewDesc").textContent=`${VIEWS[currentViewKey].desc} / 現在ロール: ${role}`;
   }
 
   function renderFilters(){
@@ -708,8 +1140,30 @@
       box.appendChild(delBtn);
     }
 
+    if(currentViewKey==="requests"){
+      box.appendChild(makeSelect("f_req_status",["REQUESTED","APPROVED","REJECTED","USED"],"申請状態：すべて"));
+      $("#f_req_status").value="REQUESTED";
+      box.appendChild(makeSelect("f_req_entity",["plan","item","layout"],"対象：すべて"));
+      box.appendChild(makeSelect("f_req_grant",["UNUSED","USED"],"承認利用：すべて"));
+      const promoSel=el("select",{class:"select",id:"f_req_promo"});
+      promoSel.appendChild(el("option",{value:"__all",text:"施策：すべて"}));
+      all.plans.forEach(p=>promoSel.appendChild(el("option",{value:p.promo_id,text:`${p.promo_id}｜${p.campaign} ${p.edition}`})));
+      promoSel.addEventListener("change",()=>renderMain());
+      box.appendChild(promoSel);
+      box.appendChild(makeSelect("f_sort",["申請日時（新→旧）","申請日時（旧→新）"],"ソート：申請日時（新→旧）"));
+      $("#f_sort").value="申請日時（新→旧）";
+    }
+
+    if(currentViewKey==="notifications"){
+      box.appendChild(makeSelect("f_notif_status",["PENDING","SENT","FAILED"],"通知状態：すべて"));
+      box.appendChild(makeSelect("f_notif_sev",["HIGH","MEDIUM","LOW"],"重要度：すべて"));
+      box.appendChild(makeSelect("f_notif_link",["REQ_LINKED","NO_REQUEST"],"申請紐づけ：すべて"));
+      box.appendChild(makeSelect("f_sort",["作成日時（新→旧）","作成日時（旧→新）"],"ソート：作成日時（新→旧）"));
+      $("#f_sort").value="作成日時（新→旧）";
+    }
+
     if(currentViewKey==="history"){
-      box.appendChild(makeSelect("f_entity",["すべて","plan","item","bulk"],"対象：すべて"));
+      box.appendChild(makeSelect("f_entity",["すべて","plan","item","bulk","approval","notification"],"対象：すべて"));
       $("#f_entity").value="すべて";
       box.appendChild(makeSelect("f_sort",["新しい順","古い順"],"ソート：新しい順"));
       $("#f_sort").value="新しい順";
@@ -844,16 +1298,68 @@
     return rows;
   }
 
+  function filterRequests(){
+    let rows=emergencyRequests.slice();
+    const q=qtext();
+    const st=$("#f_req_status")?.value||"__all";
+    const ent=$("#f_req_entity")?.value||"__all";
+    const promo=$("#f_req_promo")?.value||"__all";
+    const grant=$("#f_req_grant")?.value||"__all";
+    const sort=$("#f_sort")?.value||"申請日時（新→旧）";
+    rows=rows.filter(r=>{
+      if(st!=="__all"&&r.status!==st) return false;
+      if(ent!=="__all"&&r.entity!==ent) return false;
+      if(promo!=="__all"&&r.promo_id!==promo) return false;
+      if(grant==="UNUSED" && !(r.status==="APPROVED" && !r.used_at)) return false;
+      if(grant==="USED" && !r.used_at) return false;
+      if(!q) return true;
+      const hay=[r.request_id,r.promo_id,r.entity,r.entity_id,r.reason,r.requested_by,r.status].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    rows.sort((a,b)=> sort==="申請日時（旧→新）"
+      ? String(a.requested_at||"").localeCompare(String(b.requested_at||""))
+      : String(b.requested_at||"").localeCompare(String(a.requested_at||""))
+    );
+    return rows;
+  }
+
+  function requestGrantState(r){
+    if(r.status==="USED" || r.used_at) return "USED";
+    if(r.status==="APPROVED") return "UNUSED";
+    return "N/A";
+  }
+
+  function filterNotifications(){
+    let rows=notificationQueue.slice();
+    const q=qtext();
+    const st=$("#f_notif_status")?.value||"__all";
+    const sev=$("#f_notif_sev")?.value||"__all";
+    const linked=$("#f_notif_link")?.value||"__all";
+    const sort=$("#f_sort")?.value||"作成日時（新→旧）";
+    rows=rows.filter(n=>{
+      if(st!=="__all"&&n.status!==st) return false;
+      if(sev!=="__all"&&n.severity!==sev) return false;
+      if(linked==="REQ_LINKED" && !n.request_id) return false;
+      if(linked==="NO_REQUEST" && n.request_id) return false;
+      if(!q) return true;
+      const hay=[n.notification_id,n.type,n.severity,n.status,n.summary,n.promo_id,n.request_id].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    rows.sort((a,b)=> sort==="作成日時（旧→新）"
+      ? String(a.created_at||"").localeCompare(String(b.created_at||""))
+      : String(b.created_at||"").localeCompare(String(a.created_at||""))
+    );
+    return rows;
+  }
+
   function filterHistory(){
     let rows=audit.slice();
     const q=qtext();
     const entity=$("#f_entity")?.value||"すべて";
     const sort=$("#f_sort")?.value||"新しい順";
     rows=rows.filter(e=>{
-      if(entity==="plan") return e.entity==="plan";
-      if(entity==="item") return e.entity==="item";
-      if(entity==="bulk") return e.entity==="bulk";
-      return true;
+      if(entity==="すべて") return true;
+      return e.entity===entity;
     });
     rows=rows.filter(e=>{
       if(!q) return true;
@@ -881,7 +1387,8 @@
       store_set:"対象店",slots:"枠数",fill:"埋まり",deadline:"締切",risk:"リスク",
       owner:"営業企画",status:"状態",updated_at:"更新", published:"公開", changed:"変更",
       dept:"部門",buyer:"BY",jan:"JAN",product:"商品名",price:"売価",slot:"枠",item_status:"提出",
-      ts:"日時", actor:"操作者", entity:"対象", action:"操作", summary:"内容"
+      ts:"日時", actor:"操作者", entity:"対象", action:"操作", summary:"内容",
+      requested_at:"申請日時", request_id:"申請ID", requested_by:"申請者", reviewed_at:"レビュー日時", reason:"理由", grant_state:"承認利用", used_at:"使用日時", used_by:"使用者", created_at:"作成日時", sent_at:"送信日時", next_retry_at:"次回再送", retry_count:"再送回数", type:"通知種別", severity:"重要度"
     };
     cols.forEach(c=>thead.appendChild(el("th",{text:label[c]||c})));
 
@@ -892,6 +1399,8 @@
       const sid=$("#f_store")?.value;
       rows = (sid && sid!=="__all") ? filterStorePlans(sid) : [];
     }
+    if(currentViewKey==="requests") rows=filterRequests();
+    if(currentViewKey==="notifications") rows=filterNotifications();
     if(currentViewKey==="history") rows=filterHistory();
 
     $("#resultHint").textContent = `${rows.length} 件`;
@@ -899,6 +1408,8 @@
     rows.forEach(r=>{
       const isSel = (currentViewKey==="items") ? (r.item_id===selectedKey) :
                     (currentViewKey==="history") ? (r.event_id===selectedKey) :
+                    (currentViewKey==="requests") ? (r.request_id===selectedKey) :
+                    (currentViewKey==="notifications") ? (r.notification_id===selectedKey) :
                     (currentViewKey==="store") ? (r.promo_id===selectedKey) :
                     (r.promo_id===selectedKey);
       const tr=el("tr",{class:isSel?"selected":"",onclick:()=>selectRow(r)});
@@ -1119,8 +1630,18 @@
           const k=(r.item_status==="承認")?"ok":(r.item_status==="差戻し")?"danger":(r.item_status==="提出済")?"warn":"warn";
           td=el("td",{},[badge(r.item_status,k)]);
         } else if(c==="status"){
-          const k=(r.status==="確定"||r.status==="入稿/印刷")?"ok":"warn";
-          td=el("td",{},[badge(r.status,k)]);
+          if(["REQUESTED","APPROVED","REJECTED","USED"].includes(r.status)){
+            const k=r.status==="APPROVED"?"ok":r.status==="REJECTED"?"danger":"warn";
+            const chips=[badge(r.status,k)];
+            if(isRequestOverdue(r)) chips.push(badge("SLA超過","danger"));
+            td=el("td",{},chips);
+          }else if(["PENDING","SENT","FAILED"].includes(r.status)){
+            const kind=r.status==="SENT"?"ok":r.status==="FAILED"?"danger":"warn";
+            td=el("td",{},[badge(r.status,kind)]);
+          }else{
+            const k=(r.status==="確定"||r.status==="入稿/印刷")?"ok":"warn";
+            td=el("td",{},[badge(r.status,k)]);
+          }
         } else if(c==="published"){
           const pub=r.published_at;
           if(!pub) td=el("td",{},[badge("未公開","warn")]);
@@ -1128,7 +1649,14 @@
             const changed=changedAfterPublish(r);
             td=el("td",{},[badge(changed?"公開後に変更あり":"公開済","ok")]);
           }
-        } else if(c==="changed"){
+        } else if(c==="grant_state"){
+          const gs=requestGrantState(r);
+          td=el("td",{},[badge(gs,gs==="UNUSED"?"ok":gs==="USED"?"warn":"warn")]);
+        } else if(c==="used_at" || c==="created_at" || c==="sent_at" || c==="next_retry_at") td=el("td",{class:"nowrap",text:shortDT(r[c])||""});
+        else if(c==="retry_count") td=el("td",{class:"mono",text:String(r.retry_count||0)});
+        else if(c==="severity") td=el("td",{},[badge(r.severity||"-",r.severity==="HIGH"?"danger":"warn")]);
+        else if(c==="summary" && currentViewKey==="notifications") td=el("td",{},[el("div",{style:"font-weight:900;",text:r.summary||"-"}), el("div",{class:"mono",text:`${r.type||"-"} / req=${r.request_id||"-"}`})]);
+        else if(c==="changed"){
           const p=all.plans.find(x=>x.promo_id===r.promo_id);
           if(p && p.published_at && changedAfterPublish(p)) td=el("td",{},[badge("変更あり","danger")]);
           else td=el("td",{},[badge("—","warn")]);
@@ -1150,11 +1678,23 @@
     const total=all.plans.length;
     const overdue=all.plans.filter(p=>(daysDiff(p.buyer_deadline)??9999)<0).length;
     const near7=all.plans.filter(p=>{const d=daysDiff(p.buyer_deadline); return d!==null && d>=0 && d<=7;}).length;
+    const recentPostPublish=postPublishEvents.filter(e=>Date.now()-new Date(e.occurred_at).getTime()<=7*24*60*60*1000).length;
+    const pendingEmergency=emergencyRequests.filter(r=>r.status==="REQUESTED").length;
+    const overdueEmergency=emergencyRequests.filter(isRequestOverdue).length;
+    const pendingNotifications=notificationQueue.filter(n=>n.status==="PENDING").length;
+    const failedNotifications=notificationQueue.filter(n=>n.status==="FAILED").length;
+    const dueRetryNotifications=notificationQueue.filter(n=>shouldRetryNotification(n)).length;
 
     dash.appendChild(el("div",{class:"kpiGrid"},[
       el("div",{class:"kpi"},[el("div",{class:"k",text:"施策数"}), el("div",{class:"v",text:String(total)})]),
       el("div",{class:"kpi"},[el("div",{class:"k",text:"締切超過"}), el("div",{class:"v",text:String(overdue)})]),
       el("div",{class:"kpi"},[el("div",{class:"k",text:"締切7日以内"}), el("div",{class:"v",text:String(near7)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"公開後変更(7日)"}), el("div",{class:"v",text:String(recentPostPublish)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"緊急変更申請(未処理)"}), el("div",{class:"v",text:String(pendingEmergency)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"緊急変更SLA超過"}), el("div",{class:"v",text:String(overdueEmergency)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"通知キュー(PENDING)"}), el("div",{class:"v",text:String(pendingNotifications)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"通知 再送期限到来"}), el("div",{class:"v",text:String(dueRetryNotifications)})]),
+      el("div",{class:"kpi"},[el("div",{class:"k",text:"通知 送信失敗"}), el("div",{class:"v",text:String(failedNotifications)})]),
     ]));
     dash.appendChild(el("div",{style:"height:10px"}));
 
@@ -1186,11 +1726,14 @@
   }
 
   function setDetailButtons(enabled){
-    $("#editBtn").disabled = !enabled || currentViewKey==="dash" || currentViewKey==="history";
-    $("#deleteBtn").disabled = !enabled || editMode || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history";
-    $("#saveBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history";
-    $("#cancelBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history";
-    $("#publishBtn").disabled = !(enabled && currentViewKey==="plans" && !editMode);
+    const canEdit = (currentViewKey==="plans") ? hasPerm("plan:edit") : (currentViewKey==="items") ? hasPerm("item:edit") : true;
+    const canDelete = (currentViewKey==="plans") ? hasPerm("plan:delete") : (currentViewKey==="items") ? hasPerm("item:delete") : false;
+    const canPublish = (currentViewKey==="plans") ? hasPerm("plan:publish") : false;
+    $("#editBtn").disabled = !enabled || !canEdit || currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications";
+    $("#deleteBtn").disabled = !enabled || !canDelete || editMode || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications";
+    $("#saveBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications";
+    $("#cancelBtn").disabled = !enabled || !editMode || currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications";
+    $("#publishBtn").disabled = !(enabled && canPublish && currentViewKey==="plans" && !editMode);
   }
 
     // ===== Layout Editor =====
@@ -1328,12 +1871,16 @@
     const promo_id = selectedKey;
     const page = layoutState.page||1;
     const lay = ensureLayout(promo_id,page);
+    const perm = ensurePostPublishGrantOrRequest({promo_id, entity:"layout", entity_id:lay?.layout_id, reasonDefault:"公開後のレイアウト枠追加が必要"});
+    if(!perm.ok) return;
     const id = nextSlotId(promo_id);
     const s={slot_id:id,label:id,x:0.08,y:0.08,w:0.30,h:0.18,locked:false,flex:false,updated_at:nowISO(),updated_by:getUser()};
     lay.slots.push(s);
     lay.updated_at=nowISO(); lay.updated_by=getUser();
     saveAll();
-    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot add ${id}`});
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot add ${id}`, before_json:null, after_json:deep(s)});
+    emitPostPublishEvent({promo_id, entity:"layout", entity_id:lay.layout_id, action:"update", before_json:null, after_json:deep(s), reason:"公開後枠追加"});
+    if(perm.grant) consumeEmergencyApproval(perm.grant, "layout slot add after publish");
     selectedSlotId=id;
     renderMain(); renderDetail();
   }
@@ -1342,14 +1889,19 @@
     const promo_id=selectedKey;
     const page=layoutState.page||1;
     const lay=ensureLayout(promo_id,page);
+    const perm = ensurePostPublishGrantOrRequest({promo_id, entity:"layout", entity_id:lay?.layout_id, reasonDefault:"公開後のレイアウト枠削除が必要"});
+    if(!perm.ok) return;
     const idx=lay.slots.findIndex(s=>s.slot_id===selectedSlotId);
     if(idx<0) return;
     const id=lay.slots[idx].slot_id;
+    const beforeSlot=deep(lay.slots[idx]);
     if(!confirm(`枠 ${id} を削除します。よろしいですか？`)) return;
     lay.slots.splice(idx,1);
     lay.updated_at=nowISO(); lay.updated_by=getUser();
     saveAll();
-    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot delete ${id}`});
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:`slot delete ${id}`, before_json:beforeSlot, after_json:null});
+    emitPostPublishEvent({promo_id, entity:"layout", entity_id:lay.layout_id, action:"delete", before_json:beforeSlot, after_json:null, reason:"公開後枠削除"});
+    if(perm.grant) consumeEmergencyApproval(perm.grant, "layout slot delete after publish");
     selectedSlotId=null;
     renderMain(); renderDetail();
   }
@@ -1486,9 +2038,14 @@ function applySlotEl(el, s){
     const s = lay?.slots?.find(x=>x.slot_id===slot_id);
     if(!s){ renderMain(); renderDetail(); return; }
 
+    const perm = ensurePostPublishGrantOrRequest({promo_id, entity:"layout", entity_id:layout_id, reasonDefault:"公開後のレイアウト位置変更が必要"});
+    if(!perm.ok){ Object.assign(s, orig); renderMain(); renderDetail(); return; }
+
     saveAll();
     const summary = mode==="move" ? `slot move ${slot_id}` : `slot resize ${slot_id}`;
-    logEvent({entity:"layout", entity_id:layout_id, action:"update", promo_id, summary, meta:{slot_id, before:orig, after:s}});
+    logEvent({entity:"layout", entity_id:layout_id, action:"update", promo_id, summary, meta:{slot_id, before:orig, after:s}, before_json:deep(orig), after_json:deep(s)});
+    emitPostPublishEvent({promo_id, entity:"layout", entity_id:layout_id, action:"update", before_json:deep(orig), after_json:deep(s), reason:"公開後レイアウト更新"});
+    if(perm.grant) consumeEmergencyApproval(perm.grant, "layout move/resize after publish");
     if(moved) layoutState._justDragged = Date.now();
 
     // refresh once (counts/selection/inputs)
@@ -1522,10 +2079,15 @@ function applySlotEl(el, s){
     const promo_id=selectedKey;
     const page=layoutState.page||1;
     const lay=ensureLayout(promo_id,page);
+    const perm = ensurePostPublishGrantOrRequest({promo_id, entity:"layout", entity_id:lay?.layout_id, reasonDefault:"公開後の背景差し替えが必要"});
+    if(!perm.ok) return;
+    const beforeBg=deep(lay);
     lay.bg=jpeg; lay.bg_w=cw; lay.bg_h=ch;
     lay.updated_at=nowISO(); lay.updated_by=getUser();
     saveAll();
-    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:"background set"});
+    logEvent({entity:"layout", entity_id:lay.layout_id, action:"update", promo_id, summary:"background set", before_json:beforeBg, after_json:deep(lay)});
+    emitPostPublishEvent({promo_id, entity:"layout", entity_id:lay.layout_id, action:"update", before_json:beforeBg, after_json:deep(lay), reason:"公開後背景変更"});
+    if(perm.grant) consumeEmergencyApproval(perm.grant, "layout background update after publish");
     renderMain(); renderDetail();
   }
 
@@ -1606,6 +2168,87 @@ function renderDetail(){
       body.appendChild(delBtn);
     }
 
+    if(currentViewKey==="requests"){
+      $("#detailHead").textContent="緊急変更申請";
+      $("#detailMeta").textContent="施策横断の申請管理";
+      $("#editState").textContent="VIEW";
+      setDetailButtons(true);
+      if(!selectedKey){ setDetailButtons(false); return; }
+      const r=emergencyRequests.find(x=>x.request_id===selectedKey);
+      if(!r){ setDetailButtons(false); return; }
+      const k=r.status==="APPROVED"?"ok":r.status==="REJECTED"?"danger":r.status==="USED"?"warn":"warn";
+      body.appendChild(el("div",{class:"callout"},[
+        el("div",{style:"font-weight:950; margin-bottom:6px;"}, "緊急変更申請"),
+        el("div",{class:"mono",text:`${r.request_id} / ${r.promo_id} / ${r.entity}${r.entity_id?`(${r.entity_id})`:""}`}),
+        el("div",{style:"margin-top:6px; font-weight:900;"}, `理由: ${r.reason||"-"}`),
+        el("div",{class:"mono",style:"margin-top:6px;",text:`申請: ${shortDT(r.requested_at)} / ${r.requested_by}`}),
+        r.reviewed_at ? el("div",{class:"mono",text:`レビュー: ${shortDT(r.reviewed_at)} / ${r.reviewed_by||"-"}`}) : el("div")
+      ]));
+      const statusChips=[badge(r.status,k)];
+      if(isRequestOverdue(r)) statusChips.push(badge("SLA超過","danger"));
+      body.appendChild(el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;"},statusChips));
+      const elapsed=requestElapsedMinutes(r);
+      body.appendChild(el("div",{class:"mono",style:"margin-top:6px;",text:`経過: ${elapsed===null?"-":`${elapsed}分`} / SLA: ${REQUEST_REVIEW_SLA_MIN}分`}));
+      if(r.escalated_at){
+        body.appendChild(el("div",{class:"mono",style:"margin-top:6px;",text:`エスカレーション: ${shortDT(r.escalated_at)} / ${r.escalated_by||"-"} / count=${r.escalated_count||1}`}));
+      }
+      if(r.status==="USED"){
+        body.appendChild(el("div",{class:"mono",style:"margin-top:6px;",text:`使用: ${shortDT(r.used_at)} / ${r.used_by||"-"} / note=${r.used_note||"-"}`}));
+      }
+      if(r.status==="REQUESTED" && hasPerm("override:deadline")){
+        body.appendChild(el("div",{style:"display:flex; gap:8px; flex-wrap:wrap;"},[
+          el("button",{class:"btn",onclick:()=>{ if(escalateEmergencyRequest(r.request_id)){ alert(`エスカレーション記録: ${r.request_id}`); renderAll(); }}},"⏰ エスカレーション記録"),
+          el("button",{class:"btn btnPrimary",onclick:()=>{ if(approveEmergencyRequest(r.request_id)){ alert(`承認しました: ${r.request_id}`); renderAll(); }}},"承認"),
+          el("button",{class:"btn btnDanger",onclick:()=>{ if(rejectEmergencyRequest(r.request_id)){ alert(`却下しました: ${r.request_id}`); renderAll(); }}},"却下")
+        ]));
+      }
+      const rel=notificationsForRequest(r.request_id).slice(0,5);
+      body.appendChild(el("div",{class:"field"},[
+        el("div",{class:"label",text:"関連通知（最新5件）"}),
+        rel.length?el("div",{},rel.map(n=>el("div",{class:"mono",style:"margin-top:4px;",text:`${shortDT(n.created_at)} / ${n.status} / ${n.type}`}))):el("div",{class:"hint",text:"関連通知なし"})
+      ]));
+      return;
+    }
+
+    if(currentViewKey==="notifications"){
+      $("#detailHead").textContent="通知キュー";
+      $("#detailMeta").textContent="送信待ち通知の詳細";
+      $("#editState").textContent="VIEW";
+      setDetailButtons(true);
+      if(!selectedKey){ setDetailButtons(false); return; }
+      const n=notificationQueue.find(x=>x.notification_id===selectedKey);
+      if(!n){ setDetailButtons(false); return; }
+      body.appendChild(el("div",{class:"callout"},[
+        el("div",{style:"font-weight:950; margin-bottom:6px;"}, "通知（送信キュー）"),
+        el("div",{class:"mono",text:`${n.notification_id} / ${n.type} / ${n.severity}`}),
+        el("div",{style:"margin-top:6px; font-weight:900;"}, n.summary||"—"),
+        el("div",{class:"mono",style:"margin-top:6px;",text:`created=${shortDT(n.created_at)} / status=${n.status} / retry=${n.retry_count||0}`}),
+        el("div",{class:"mono",style:"margin-top:6px;",text:`promo_id=${n.promo_id||"-"} / request_id=${n.request_id||"-"}`}),
+      ]));
+      if(n.sent_at){
+        body.appendChild(el("div",{class:"mono",style:"margin-top:6px;",text:`sent=${shortDT(n.sent_at)} / by=${n.sent_by||"-"}`}));
+      }
+      if(n.payload){
+        body.appendChild(el("div",{class:"field"},[
+          el("div",{class:"label",text:"payload(JSON)"}),
+          el("pre",{class:"mono",style:"white-space:pre-wrap; border:1px solid var(--border); border-radius:12px; padding:10px; background:rgba(0,0,0,.02); margin:0; max-height:240px; overflow:auto;"}, JSON.stringify(n.payload,null,2))
+        ]));
+      }
+      const actions=[];
+      if(n.request_id){
+        actions.push(el("button",{class:"btn",onclick:()=>{ currentViewKey="requests"; selectedKey=n.request_id; renderAll(); }},"🚨 申請へ移動"));
+      }
+      if(n.promo_id){
+        actions.push(el("button",{class:"btn",onclick:()=>{ currentViewKey="plans"; selectedKey=n.promo_id; renderAll(); }},"🗓️ 施策へ移動"));
+      }
+      if(n.status==="PENDING" && hasPerm("override:deadline")){
+        actions.push(el("button",{class:"btn",onclick:()=>{ if(retryNotification(n.notification_id,{manual:true})){ alert(`再送トライを記録: ${n.notification_id}`); renderAll(); }}},"🔁 今すぐ再送トライ"));
+        actions.push(el("button",{class:"btn btnPrimary",onclick:()=>{ if(markNotificationSent(n.notification_id)){ alert(`送信済みに更新: ${n.notification_id}`); renderAll(); }}},"📨 送信済みにする"));
+      }
+      if(actions.length) body.appendChild(el("div",{style:"display:flex; gap:8px; flex-wrap:wrap;"},actions));
+      return;
+    }
+
     if(currentViewKey==="history"){
       $("#detailHead").textContent="変更履歴";
       $("#detailMeta").textContent="左のログを選択すると詳細を表示";
@@ -1616,10 +2259,22 @@ function renderDetail(){
       if(!ev){ setDetailButtons(false); return; }
       body.appendChild(el("div",{class:"callout"},[
         el("div",{style:"font-weight:950; margin-bottom:6px;"}, "監査ログ（モック）"),
-        el("div",{class:"mono",text:`${ev.ts} / ${ev.actor} / ${ev.entity} / ${ev.action}`}),
+        el("div",{class:"mono",text:`${ev.ts} / ${ev.actor}(${ev.actor_role||"-"}) / ${ev.entity} / ${ev.action}`}),
         el("div",{style:"margin-top:6px; font-weight:900;"}, ev.summary || "—"),
         el("div",{class:"mono",style:"margin-top:6px;",text:`entity_id=${ev.entity_id} / promo_id=${ev.promo_id||"-"}`}),
+        el("div",{class:"mono",style:"margin-top:6px;",text:`request_id=${ev.request_id||"-"} / reason=${ev.reason||"-"}`}),
       ]));
+      const pretty = (v)=>JSON.stringify(v===undefined?null:v,null,2);
+      if(ev.before_json!==null || ev.after_json!==null){
+        body.appendChild(el("div",{class:"field"},[
+          el("div",{class:"label",text:"before_json"}),
+          el("pre",{class:"mono",style:"white-space:pre-wrap; border:1px solid var(--border); border-radius:12px; padding:10px; background:rgba(0,0,0,.02); margin:0; max-height:220px; overflow:auto;"}, pretty(ev.before_json))
+        ]));
+        body.appendChild(el("div",{class:"field"},[
+          el("div",{class:"label",text:"after_json"}),
+          el("pre",{class:"mono",style:"white-space:pre-wrap; border:1px solid var(--border); border-radius:12px; padding:10px; background:rgba(0,0,0,.02); margin:0; max-height:220px; overflow:auto;"}, pretty(ev.after_json))
+        ]));
+      }
       if(ev.meta){
         body.appendChild(el("div",{class:"field"},[
           el("div",{class:"label",text:"meta(JSON)"}),
@@ -1642,6 +2297,16 @@ function renderDetail(){
     if(currentViewKey==="items") selected=all.items.find(it=>it.item_id===selectedKey);
     if(currentViewKey==="store") selected={store_id:selectedKey};
     if(!selected){ setDetailButtons(false); return; }
+
+    if(currentViewKey==="plans" && selected?.published_at && !editMode && !hasPerm("override:deadline")){
+      const reqBtn=el("button",{class:"btn btnDanger",onclick:()=>{
+        const reason=prompt("緊急変更の理由を入力してください（必須）","公開後の施策変更が必要");
+        if(!reason || !reason.trim()) return;
+        const req=requestEmergencyChange({promo_id:selected.promo_id, entity:"plan", entity_id:selected.promo_id, reason:reason.trim()});
+        if(req){ alert(`緊急変更申請を作成しました: ${req.request_id}`); renderAll(); }
+      }},"🚨 緊急変更申請");
+      body.appendChild(reqBtn);
+    }
 
     const viewObj = editMode ? draft : selected;
 
@@ -1684,6 +2349,28 @@ function renderDetail(){
           ])
         ])
       ]));
+      const reqs=requestsForPromo(viewObj.promo_id).slice(0,8);
+      body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
+        el("div",{style:"padding:10px; border-bottom:1px solid var(--border); font-weight:950;"},["緊急変更申請（この施策）"]),
+        el("div",{style:"padding:10px; display:flex; flex-direction:column; gap:8px;"}, reqs.length?reqs.map(r=>{
+          const k=r.status==="APPROVED"?"ok":r.status==="REJECTED"?"danger":"warn";
+          const actions=[];
+          if(r.status==="REQUESTED" && hasPerm("override:deadline")){
+            actions.push(el("button",{class:"btn btnSmall btnPrimary",onclick:()=>{ if(approveEmergencyRequest(r.request_id)){ alert(`承認しました: ${r.request_id}`); renderAll(); }}},"承認"));
+            actions.push(el("button",{class:"btn btnSmall btnDanger",onclick:()=>{ if(rejectEmergencyRequest(r.request_id)){ alert(`却下しました: ${r.request_id}`); renderAll(); }}},"却下"));
+          }
+          return el("div",{style:"display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; border:1px solid var(--border); border-radius:12px; padding:10px;"},[
+            el("div",{},[
+              el("div",{style:"font-weight:950;"},`${shortDT(r.requested_at)} / ${r.requested_by}`),
+              el("div",{class:"hint",text:`${r.request_id} / ${r.entity}${r.entity_id?`(${r.entity_id})`:""}`}),
+              el("div",{class:"hint",text:`理由: ${r.reason||"-"}`}),
+              r.reviewed_at ? el("div",{class:"mono",text:`レビュー: ${shortDT(r.reviewed_at)} / ${r.reviewed_by||"-"}`}) : el("div")
+            ]),
+            el("div",{style:"display:flex; gap:8px; align-items:center; flex-wrap:wrap;"},[badge(r.status,k), ...actions])
+          ]);
+        }):[el("div",{class:"hint",text:"申請はまだありません。"})])
+      ]));
+
       // latest logs for this promo
       const logs=logsForPromo(viewObj.promo_id).slice(0,8);
       body.appendChild(el("div",{class:"card",style:"box-shadow:none; border-radius:14px;"},[
@@ -1859,6 +2546,8 @@ function renderDetail(){
     editMode=false; draft=null;
     if(currentViewKey==="items") selectedKey=row.item_id;
     else if(currentViewKey==="history") selectedKey=row.event_id;
+    else if(currentViewKey==="requests") selectedKey=row.request_id;
+    else if(currentViewKey==="notifications") selectedKey=row.notification_id;
     else selectedKey=row.promo_id;
     renderMain(); renderDetail();
   }
@@ -1872,7 +2561,7 @@ function renderDetail(){
   }
 
   function startEdit(){
-    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="history") return;
+    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications") return;
     let selected=null;
     if(currentViewKey==="plans") selected=all.plans.find(p=>p.promo_id===selectedKey);
     if(currentViewKey==="items") selected=all.items.find(it=>it.item_id===selectedKey);
@@ -1894,6 +2583,58 @@ function renderDetail(){
       if(v===undefined||v===null||String(v).trim()==="") miss.push(f.label);
     });
     if(miss.length){ alert("必須項目が未入力：\n- "+miss.join("\n- ")); return false; }
+
+    if(currentViewKey==="plans"){
+      if(draft.store_set==="特定10店" && (!Array.isArray(draft.store_ids)||draft.store_ids.length===0)){
+        alert("保存不可: 対象店が『特定10店』のときは店舗を1件以上選択してください。");
+        return false;
+      }
+      if(draft.issue_date && draft.buyer_deadline && draft.buyer_deadline>draft.issue_date){
+        alert("保存不可: BY締切は発行日以前に設定してください。");
+        return false;
+      }
+      if(Number(draft.slots||0)<1){
+        alert("保存不可: 枠数(slots)は1以上が必要です。");
+        return false;
+      }
+    }
+
+    if(currentViewKey==="items"){
+      const jan=String(draft.jan||"").trim();
+      if(!/^\d{13}$/.test(jan)){
+        alert("保存不可: JANは13桁数字で入力してください。");
+        return false;
+      }
+      if(!Number.isInteger(Number(draft.price)) || Number(draft.price)<0){
+        alert("保存不可: 売価は0以上の整数で入力してください。");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function validatePlanBeforePublish(plan){
+    if(!plan) return false;
+    if(plan.status!=="確定"){
+      alert("公開不可: 施策ステータスが『確定』ではありません。");
+      return false;
+    }
+    const list=all.items.filter(it=>it.promo_id===plan.promo_id);
+    if(list.length===0){
+      alert("公開不可: 対象商品が1件もありません。");
+      return false;
+    }
+    for(const it of list){
+      if(!it.jan || !it.product || it.price===null || it.price===undefined || String(it.slot||"").trim()===""){
+        alert(`公開不可: 必須項目不足の明細があります（item_id=${it.item_id}）。`);
+        return false;
+      }
+      if(it.item_status==="差戻し" || it.item_status==="下書き"){
+        alert(`公開不可: 未確定の明細があります（item_id=${it.item_id} / status=${it.item_status}）。`);
+        return false;
+      }
+    }
     return true;
   }
 
@@ -1902,21 +2643,76 @@ function renderDetail(){
     if(!validateDraft()) return;
 
     const t=nowISO();
+    let emergencyGrant=null;
     if(currentViewKey==="plans"){
+      if(!ensurePerm("plan:edit","施策の保存権限がありません。")) return;
       const i=all.plans.findIndex(p=>p.promo_id===draft.promo_id);
       const before = i>=0 ? deep(all.plans[i]) : null;
+      if(before && isPastDeadline(before.buyer_deadline) && !hasPerm("override:deadline")){
+        alert("保存不可: BY締切を過ぎた施策は管理者のみ更新できます。");
+        return;
+      }
+      if(before && before.published_at && !hasPerm("override:deadline")){
+        emergencyGrant=findUsableEmergencyApproval({promo_id:draft.promo_id, entity:"plan", entity_id:draft.promo_id});
+        if(!emergencyGrant){
+          if(confirm("公開後の施策は直接編集できません。\n緊急変更申請を作成しますか？")){
+            const reason=prompt("変更理由（必須）","公開後の施策変更が必要");
+            if(reason && reason.trim()){
+              const req=requestEmergencyChange({promo_id:draft.promo_id, entity:"plan", entity_id:draft.promo_id, reason:reason.trim()});
+              if(req) alert(`申請を作成しました: ${req.request_id}`);
+            }
+          }
+          return;
+        }
+      }
+      if(before && !canPlanTransition(before.status, draft.status)){
+        alert(`保存不可: 状態遷移 ${before.status} -> ${draft.status} は禁止です。`);
+        return;
+      }
+      if(before && before.status!==draft.status && !canSetPlanStatus(before.status,draft.status)){
+        alert("保存不可: 現在ロールではこのステータス変更はできません。");
+        return;
+      }
       draft.updated_at=t;
       if(i>=0) all.plans[i]=deep(draft); else all.plans.unshift(deep(draft));
-      logEvent({entity:"plan", entity_id:draft.promo_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft)});
+      logEvent({
+        entity:"plan", entity_id:draft.promo_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft),
+        before_json:before, after_json:deep(draft)
+      });
+      if(before && before.published_at) emitPostPublishEvent({promo_id:draft.promo_id, entity:"plan", entity_id:draft.promo_id, action:"update", before_json:before, after_json:deep(draft), reason:`公開後の施策更新${emergencyGrant?` / 承認申請:${emergencyGrant.request_id}`:""}`});
+      if(emergencyGrant) consumeEmergencyApproval(emergencyGrant, "plan update after publish");
     }
     if(currentViewKey==="items"){
+      if(!ensurePerm("item:edit","明細の保存権限がありません。")) return;
       const i=all.items.findIndex(it=>it.item_id===draft.item_id);
       const before = i>=0 ? deep(all.items[i]) : null;
+      const p=all.plans.find(p=>p.promo_id===draft.promo_id);
+      if(p && isPastDeadline(p.buyer_deadline) && !hasPerm("override:deadline")){
+        alert("保存不可: BY締切を過ぎた施策の明細は管理者のみ更新できます。");
+        return;
+      }
+      if(p && p.published_at && !hasPerm("override:deadline")){
+        emergencyGrant=findUsableEmergencyApproval({promo_id:draft.promo_id, entity:"item", entity_id:draft.item_id});
+        if(!emergencyGrant){
+          if(confirm("公開後の明細は直接編集できません。\n緊急変更申請を作成しますか？")){
+            const reason=prompt("変更理由（必須）","公開後の明細変更が必要");
+            if(reason && reason.trim()){
+              const req=requestEmergencyChange({promo_id:draft.promo_id, entity:"item", entity_id:draft.item_id, reason:reason.trim()});
+              if(req) alert(`申請を作成しました: ${req.request_id}`);
+            }
+          }
+          return;
+        }
+      }
       draft.updated_at=t;
       if(i>=0) all.items[i]=deep(draft); else all.items.unshift(deep(draft));
-      const p=all.plans.find(p=>p.promo_id===draft.promo_id);
       if(p) p.updated_at=t;
-      logEvent({entity:"item", entity_id:draft.item_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft)});
+      logEvent({
+        entity:"item", entity_id:draft.item_id, promo_id:draft.promo_id, action:(before?"update":"create"), summary:summarizeDiff(before,draft),
+        before_json:before, after_json:deep(draft)
+      });
+      if(p?.published_at && before) emitPostPublishEvent({promo_id:draft.promo_id, entity:"item", entity_id:draft.item_id, action:"update", before_json:before, after_json:deep(draft), reason:`公開後の明細更新${emergencyGrant?` / 承認申請:${emergencyGrant.request_id}`:""}`});
+      if(emergencyGrant) consumeEmergencyApproval(emergencyGrant, "item update after publish");
     }
     if(currentViewKey==="store"){ selectedKey=draft.store_id; }
     saveAll();
@@ -1928,11 +2724,12 @@ function renderDetail(){
     if(editMode && !confirm("編集中です。新規作成へ移動すると編集内容が破棄されます。続行しますか？")) return;
     editMode=false; draft=null;
 
-    if(currentViewKey==="dash" || currentViewKey==="history"){ alert("このビューでは新規作成できません。"); return; }
+    if(currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications"){ alert("このビューでは新規作成できません。"); return; }
     if(currentViewKey==="store"){ alert("店舗ビューは“店舗を選択”するビューです（新規作成なし）。"); return; }
 
     const t=nowISO();
     if(currentViewKey==="plans"){
+      if(!ensurePerm("plan:create","施策の新規作成権限がありません。")) return;
       const promo_id=uid();
       const obj={promo_id,kind:MASTER.kinds[0],campaign:"",edition:"A版",issue_date:todayYMD(),period_start:todayYMD(),period_end:todayYMD(),store_set:MASTER.store_sets[0],store_ids:[],slots:60,buyer_deadline:todayYMD(),owner:MASTER.owners[0],status:MASTER.plan_status[0],published_at:null,note:"",created_at:t,updated_at:t};
       all.plans.unshift(obj); saveAll();
@@ -1940,6 +2737,7 @@ function renderDetail(){
       selectedKey=promo_id; editMode=true; draft=deep(obj); renderAll(); return;
     }
     if(currentViewKey==="items"){
+      if(!ensurePerm("item:create","明細の新規作成権限がありません。")) return;
       if(!all.plans.length){ alert("先に施策計画を作成してください。"); return; }
       const item_id=iid();
       const obj={item_id,promo_id:all.plans[0].promo_id,dept:MASTER.depts[0],buyer:MASTER.buyers[0],jan:"",product:"",price:0,regular_price:0,slot:"",item_status:MASTER.item_status[0],note:"",created_at:t,updated_at:t};
@@ -1950,35 +2748,42 @@ function renderDetail(){
   }
 
   function deleteSelected(){
-    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history") return;
+    if(!selectedKey || currentViewKey==="dash" || currentViewKey==="store" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications") return;
     if(currentViewKey==="plans"){
+      if(!ensurePerm("plan:delete","施策の削除権限がありません。")) return;
       const p=all.plans.find(x=>x.promo_id===selectedKey); if(!p) return;
+      if(p.published_at && !hasPerm("override:deadline")) { alert("公開済み施策の削除は管理者のみ可能です。"); return; }
       if(!confirm(`施策を削除：${p.campaign} ${p.edition}\n（関連する明細も削除）`)) return;
       all.plans=all.plans.filter(x=>x.promo_id!==selectedKey);
       const removedItems = all.items.filter(it=>it.promo_id===selectedKey);
       all.items=all.items.filter(it=>it.promo_id!==selectedKey);
-      logEvent({entity:"plan", entity_id:selectedKey, promo_id:selectedKey, action:"delete", summary:`delete plan + items(${removedItems.length})`});
+      logEvent({entity:"plan", entity_id:selectedKey, promo_id:selectedKey, action:"delete", summary:`delete plan + items(${removedItems.length})`, before_json:deep(p), after_json:null});
+      if(p.published_at) emitPostPublishEvent({promo_id:selectedKey, entity:"plan", entity_id:selectedKey, action:"delete", before_json:deep(p), after_json:null, reason:"公開後の施策削除"});
       selectedKey=null; editMode=false; draft=null; saveAll(); renderAll(); return;
     }
     if(currentViewKey==="items"){
+      if(!ensurePerm("item:delete","明細の削除権限がありません。")) return;
       const it=all.items.find(x=>x.item_id===selectedKey); if(!it) return;
       if(!confirm(`明細を削除：${it.product||"(無題)"} / ${it.jan||""}`)) return;
       all.items=all.items.filter(x=>x.item_id!==selectedKey);
       const p=all.plans.find(p=>p.promo_id===it.promo_id); if(p) p.updated_at=nowISO();
-      logEvent({entity:"item", entity_id:selectedKey, promo_id:it.promo_id, action:"delete", summary:"delete"});
+      logEvent({entity:"item", entity_id:selectedKey, promo_id:it.promo_id, action:"delete", summary:"delete", before_json:deep(it), after_json:null});
+      if(p?.published_at) emitPostPublishEvent({promo_id:it.promo_id, entity:"item", entity_id:selectedKey, action:"delete", before_json:deep(it), after_json:null, reason:"公開後の明細削除"});
       selectedKey=null; editMode=false; draft=null; saveAll(); renderAll(); return;
     }
   }
 
   function publishPlan(){
     if(currentViewKey!=="plans" || !selectedKey) return;
+    if(!ensurePerm("plan:publish","店舗公開の権限がありません。")) return;
     const p=all.plans.find(x=>x.promo_id===selectedKey); if(!p) return;
+    if(!validatePlanBeforePublish(p)) return;
     if(!confirm(`「確定版として店舗へ公開」を記録します。\n公開後に商品が変わったら“変更あり”として検知されます。\n\n対象：${p.campaign} ${p.edition}`)) return;
     const before=deep(p);
     p.published_at=nowISO();
     p.updated_at=nowISO();
     saveAll();
-    logEvent({entity:"plan", entity_id:p.promo_id, promo_id:p.promo_id, action:"update", summary:"published_at"});
+    logEvent({entity:"plan", entity_id:p.promo_id, promo_id:p.promo_id, action:"update", summary:"published_at", before_json:before, after_json:deep(p)});
     renderAll();
   }
 
@@ -2010,6 +2815,7 @@ function renderDetail(){
   }
 
   function openBulkModal(){
+    if(!ensurePerm("item:bulk","一括アップロードの権限がありません。")) return;
     const promo=$("#f_promo")?.value || "__all";
     const hint = [
       "Excel/スプレッドシートの範囲をコピー→ここに貼り付け。",
@@ -2092,16 +2898,34 @@ function renderDetail(){
         action="update";
         target.dept=dept; target.buyer=buyer; target.jan=jan; target.product=product;
         target.price=price; target.regular_price=regular_price; target.slot=slot;
+        const pp=all.plans.find(p=>p.promo_id===promo_id);
+        const grant = (pp?.published_at && !hasPerm("override:deadline")) ? resolveEmergencyGrant({promo_id, entity:"item", entity_id:target.item_id}) : null;
+        if(pp?.published_at && !hasPerm("override:deadline") && !grant){
+          skipped++;
+          changes.push({item_id:target.item_id, jan, action:"skip", diff:"published: approval required"});
+          return;
+        }
         target.item_status=item_status; target.note=note; target.updated_at=t;
         updated++;
         changes.push({item_id:target.item_id, jan, action, diff:summarizeDiff(before,target)});
-        logEvent({entity:"item", entity_id:target.item_id, promo_id, action:"update", summary:`bulk: ${summarizeDiff(before,target)}`});
+        logEvent({entity:"item", entity_id:target.item_id, promo_id, action:"update", summary:`bulk: ${summarizeDiff(before,target)}`, before_json:before, after_json:deep(target), reason:"bulk_upsert"});
+        if(pp?.published_at) emitPostPublishEvent({promo_id, entity:"item", entity_id:target.item_id, action:"update", before_json:before, after_json:deep(target), reason:"公開後の一括更新"});
+        if(grant) consumeEmergencyApproval(grant, "bulk item update after publish");
       }else{
+        const pp=all.plans.find(p=>p.promo_id===promo_id);
+        const grant = (pp?.published_at && !hasPerm("override:deadline")) ? resolveEmergencyGrant({promo_id, entity:"item", entity_id:null}) : null;
+        if(pp?.published_at && !hasPerm("override:deadline") && !grant){
+          skipped++;
+          changes.push({item_id:"(new)", jan, action:"skip", diff:"published: approval required"});
+          return;
+        }
         const obj={item_id:iid(), promo_id, dept, buyer, jan, product, price, regular_price, slot, item_status, note, created_at:t, updated_at:t};
         all.items.unshift(obj);
         created++;
         changes.push({item_id:obj.item_id, jan, action:"create", diff:"create"});
-        logEvent({entity:"item", entity_id:obj.item_id, promo_id, action:"create", summary:"bulk: create"});
+        logEvent({entity:"item", entity_id:obj.item_id, promo_id, action:"create", summary:"bulk: create", before_json:null, after_json:deep(obj), reason:"bulk_upsert"});
+        if(pp?.published_at) emitPostPublishEvent({promo_id, entity:"item", entity_id:obj.item_id, action:"create", before_json:null, after_json:deep(obj), reason:"公開後の一括追加"});
+        if(grant) consumeEmergencyApproval(grant, "bulk item create after publish");
       }
       const p=all.plans.find(p=>p.promo_id===promo_id);
       if(p) p.updated_at=t;
@@ -2174,7 +2998,8 @@ function renderDetail(){
   }
 
   function exportJSON(){
-    const payload={exported_at:nowISO(), note:"promo_hub_mock_v3 export", data:all, audit};
+    if(!ensurePerm("data:export","Export は管理者のみ可能です。")) return;
+    const payload={exported_at:nowISO(), note:"promo_hub_mock_v3 export", data:all, audit, post_publish_events:postPublishEvents, emergency_requests:emergencyRequests, notification_queue:notificationQueue};
     openModal("Export JSON","このJSONを保存すれば、別PC/別ブラウザへ持ち運べます（監査ログも含む）。",JSON.stringify(payload,null,2),"コピー","閉じる",
       async (text, close)=>{
         try{ await navigator.clipboard.writeText(text); alert("コピーしました。"); }catch(e){ alert("コピーできませんでした。手動でコピーしてください。"); }
@@ -2184,6 +3009,7 @@ function renderDetail(){
   }
 
   function importJSON(){
+    if(!ensurePerm("data:import","Import は管理者のみ可能です。")) return;
     openModal("Import JSON","貼り付けたJSONでローカルDBを上書きします（現データは消えます）。","", "取り込み（上書き）","閉じる",
       (text, close)=>{
         try{
@@ -2194,7 +3020,10 @@ function renderDetail(){
           const layouts = Array.isArray(d.layouts)?d.layouts:[];
           all={plans:d.plans, items:d.items, layouts};
           audit = Array.isArray(obj.audit)?obj.audit:[];
-          saveAll(); saveAudit();
+          postPublishEvents = Array.isArray(obj.post_publish_events)?obj.post_publish_events:[];
+          emergencyRequests = Array.isArray(obj.emergency_requests)?obj.emergency_requests:[];
+          notificationQueue = Array.isArray(obj.notification_queue)?obj.notification_queue:[];
+          saveAll(); saveAudit(); savePostPublishEvents(); saveEmergencyRequests(); saveNotificationQueue();
           selectedKey=null; editMode=false; draft=null;
           close(); renderAll(); alert("取り込みました。");
         }catch(e){ alert("JSONの形式が不正です。"); }
@@ -2204,9 +3033,13 @@ function renderDetail(){
   }
 
   function resetAll(){
+    if(!ensurePerm("data:reset","初期化は管理者のみ可能です。")) return;
     if(!confirm("ダミーデータへ初期化します。現在のデータは消えます。よろしいですか？")) return;
     all=seedDummy(); saveAll();
     audit=[]; saveAudit();
+    postPublishEvents=[]; savePostPublishEvents();
+    emergencyRequests=[]; saveEmergencyRequests();
+    notificationQueue=[]; saveNotificationQueue();
     selectedKey=null; editMode=false; draft=null;
     renderAll();
   }
@@ -2217,12 +3050,13 @@ function renderDetail(){
     renderTable(); renderDetail();
   }
   function renderAll(){
+    processNotificationRetries();
     renderNav(); renderHeader(); renderFilters(); renderMain();
 
     // top buttons visibility
-    $("#newBtn").style.display = (currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="layout") ? "none" : "";
-    $("#newBtn").disabled = (currentViewKey==="store");
-    $("#bulkBtn").style.display = (currentViewKey==="items") ? "" : "none";
+    $("#newBtn").style.display = (currentViewKey==="dash" || currentViewKey==="history" || currentViewKey==="requests" || currentViewKey==="notifications" || currentViewKey==="layout") ? "none" : "";
+    $("#newBtn").disabled = (currentViewKey==="store") || (currentViewKey==="plans" && !hasPerm("plan:create")) || (currentViewKey==="items" && !hasPerm("item:create"));
+    $("#bulkBtn").style.display = (currentViewKey==="items" && hasPerm("item:bulk")) ? "" : "none";
   }
 
   // Bind
@@ -2242,11 +3076,13 @@ function renderDetail(){
     $("#exportBtn").addEventListener("click", exportJSON);
     $("#importBtn").addEventListener("click", importJSON);
     $("#resetBtn").addEventListener("click", resetAll);
-    $("#layoutBgInput").addEventListener("change",(e)=>{ const f=e.target.files?.[0]; if(f) setLayoutBackgroundFromFile(f); });
+    const bgInput = $("#layoutBgInput");
+    if(bgInput) bgInput.addEventListener("change",(e)=>{ const f=e.target.files?.[0]; if(f) setLayoutBackgroundFromFile(f); });
 
     $("#modalBack").addEventListener("click",(e)=>{ if(e.target===$("#modalBack")) $("#modalBack").classList.remove("show"); });
 
-    $("#userName").addEventListener("input", (e)=>setUser(e.target.value));
+    $("#userName").addEventListener("input", (e)=>{ setUser(e.target.value); renderAll(); });
+    $("#roleSelect").addEventListener("change", (e)=>{ setRole(e.target.value); renderAll(); });
 
     document.addEventListener("keydown",(e)=>{
       if(e.key==="Escape"){
@@ -2260,7 +3096,9 @@ function renderDetail(){
   // Init
   loadTheme();
   const savedUser=localStorage.getItem(USER_KEY)||"";
+  const savedRole=localStorage.getItem(ROLE_KEY)||"auto";
   $("#userName").value=savedUser;
+  $("#roleSelect").value=savedRole;
   bind();
   renderAll();
 })();
